@@ -52,21 +52,21 @@
 
 ---
 
-## 3. Typography (Unified `Segoe UI`)
+## 3. Typography (Bundled `Inter`, `Segoe UI` Fallback)
 
-Every widget and QSS rule uses **`Segoe UI`** exclusively (Windows default, zero font mixing).
+Every widget and QSS rule uses bundled **`Inter`** (`src/nyatodo/assets/fonts/Inter-*.ttf`, SIL OFL 1.1) with **`Segoe UI`** fallback—one clean, cohesive font family with zero `Consolas` / monospace font mixing.
 
 | Role | Font Family | Size | Weight | Line Height | Notes |
 |---|---|---|---|---|---|
-| **Brand Wordmark** | `Segoe UI` | `13px` | `600` | `18px` | Crisp brand anchor |
-| **Section / Day Title** | `Segoe UI` | `13px` | `600` | `18px` | Clean hierarchy |
-| **Hero Metric Value** | `Segoe UI` | `22px` | `600` | `28px` | Summary totals (`04:42:10`) |
-| **Task Title** | `Segoe UI` | `13px` | `500` (collapsed) / `600` (expanded) | `18px` | `Qt.ElideRight` when collapsed |
-| **Body / Notes / Inputs** | `Segoe UI` | `13px` | `400` | `19px` | Readable `Notes` measure |
-| **Sub-step Label** | `Segoe UI` | `12px` | `400` | `17px` | Crisp alignment with `14px` check |
-| **Live Timer / Duration** | `Segoe UI` | `12px` | `600` | `16px` | Active timer & summary durations |
-| **Metadata / Pills / Tabs** | `Segoe UI` | `11px` | `500` | `15px` | Tab labels, `@Requester`, captions |
-| **Keycaps & Hints** | `Segoe UI` | `9.5px–10px` | `500–600` | `14px` | Compact `20px` footer hints |
+| **Brand Wordmark** | `Inter` | `13px` | `600` | `18px` | Crisp brand anchor |
+| **Section / Day Title** | `Inter` | `13px` | `600` | `18px` | Clean hierarchy |
+| **Hero Metric Value** | `Inter` | `22px` | `600` | `28px` | Summary totals (`04:42:10`) |
+| **Task Title** | `Inter` | `13px` | `500` (collapsed) / `600` (expanded) | `18px` | `Qt.ElideRight` when collapsed |
+| **Body / Notes / Inputs** | `Inter` | `13px` | `400` | `19px` | Readable `Notes` measure |
+| **Sub-step Label** | `Inter` | `12px` | `400` | `17px` | Crisp alignment with `14px` check |
+| **Live Timer / Duration** | `Inter` | `12px` | `600` | `16px` | Active timer & summary durations |
+| **Metadata / Pills / Tabs** | `Inter` | `11px` | `500` | `15px` | Tab labels, `@Requester`, captions |
+| **Keycaps & Hints** | `Inter` | `9.5px–10px` | `500–600` | `14px` | Compact `20px` footer hints |
 
 ---
 

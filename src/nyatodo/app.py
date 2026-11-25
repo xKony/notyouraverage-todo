@@ -11,7 +11,7 @@ from nyatodo.platform_win32 import PlatformBridge, Win32PlatformBridge
 from nyatodo.service import TodoService
 from nyatodo.storage import SQLiteRepository
 from nyatodo.ui.main_window import HotkeyEventFilter, MainWindow
-from nyatodo.ui.theme import resolve_theme
+from nyatodo.ui.theme import load_bundled_fonts, resolve_theme
 from nyatodo.ui.tray import TrayController
 
 DEFAULT_HOTKEY_ID = 1
@@ -52,6 +52,7 @@ def build_application(
     )
     app.setApplicationName("nyatodo")
     app.setQuitOnLastWindowClosed(False)
+    load_bundled_fonts()
 
     resolved_path = db_path if db_path is not None else default_db_path()
     repo = SQLiteRepository(resolved_path)

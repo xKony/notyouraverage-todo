@@ -16,7 +16,7 @@ from nyatodo.storage import SQLiteRepository
 from nyatodo.ui.hints_footer import HintContext
 from nyatodo.ui.main_window import MainWindow, ViewTab
 from nyatodo.ui.task_row import TaskRowWidget
-from nyatodo.ui.theme import DARK_TOKENS, LIGHT_TOKENS
+from nyatodo.ui.theme import DARK_TOKENS, LIGHT_TOKENS, load_bundled_fonts, make_ui_font
 from nyatodo.ui.thinking_space import ThinkingSpaceWidget
 
 
@@ -781,3 +781,10 @@ def test_start_compact_constructor_and_tray_full_workspace(qtbot: QtBot, tmp_pat
     finally:
         window.tick_timer.stop()
         repo.close()
+
+
+def test_bundled_inter_font_loads(qtbot: QtBot) -> None:
+    loaded = load_bundled_fonts()
+    assert loaded == "Inter"
+    font = make_ui_font(13)
+    assert font.families()[0] == "Inter"

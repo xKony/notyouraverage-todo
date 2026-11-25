@@ -53,6 +53,7 @@ from nyatodo.ui.theme import (
     ColorTokens,
     build_stylesheet,
     format_hms,
+    load_bundled_fonts,
     make_ui_font,
     resolve_theme,
 )
@@ -165,6 +166,7 @@ class MainWindow(QWidget):
         self._applying_mode = False
         self._full_size = QSize(540, 640)
 
+        load_bundled_fonts()
         self._configure_window()
         self._build_ui()
 

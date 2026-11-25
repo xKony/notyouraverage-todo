@@ -1,8 +1,9 @@
 """Color tokens, typography helpers, and flat QSS stylesheet builder for nyatodo."""
 
 from dataclasses import dataclass
+from pathlib import Path
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
 
 from nyatodo.domain import ThemeMode
 
@@ -113,12 +114,43 @@ def resolve_theme(mode: ThemeMode, system_theme: ThemeMode = ThemeMode.DARK) -> 
     return LIGHT_TOKENS if resolved == ThemeMode.LIGHT else DARK_TOKENS
 
 
+_BUNDLED_FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+_LOADED_FONT_FAMILY: str | None = None
+
+
+def load_bundled_fonts() -> str:
+    """Register bundled Inter TTF weights with Qt once and return active UI font family."""
+    global _LOADED_FONT_FAMILY
+    if _LOADED_FONT_FAMILY is not None and _LOADED_FONT_FAMILY in QFontDatabase.families():
+        return _LOADED_FONT_FAMILY
+
+    family_name = "Segoe UI"
+    if QGuiApplication.instance() is not None and _BUNDLED_FONT_DIR.is_dir():
+        for font_path in sorted(_BUNDLED_FONT_DIR.glob("*.ttf")):
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            if font_id >= 0:
+                families = QFontDatabase.applicationFontFamilies(font_id)
+                if families:
+                    family_name = families[0]
+
+    _LOADED_FONT_FAMILY = family_name
+    app = QGuiApplication.instance()
+    if app is not None:
+        QGuiApplication.setFont(make_ui_font(13))
+    return family_name
+
+
 def make_ui_font(
     pixel_size: int = 13,
     weight: QFont.Weight = QFont.Weight.Normal,
 ) -> QFont:
-    """Create a unified Segoe UI QFont for all nyatodo text and numeric readouts."""
-    font = QFont("Segoe UI")
+    """Create a unified Inter QFont (with Segoe UI fallback) for all nyatodo text."""
+    font = QFont()
+    primary = _LOADED_FONT_FAMILY or "Inter"
+    if primary == "Segoe UI":
+        font.setFamilies(["Segoe UI"])
+    else:
+        font.setFamilies([primary, "Segoe UI"])
     font.setPixelSize(pixel_size)
     font.setWeight(weight)
     return font
@@ -146,7 +178,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     t = tokens
     return f"""
     QWidget {{
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         color: {t.text_primary};
         outline: none;
     }}
@@ -187,7 +219,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.accent_primary};
     }}
     #RunningTimerPillText {{
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 11px;
         font-weight: 600;
         color: {t.status_doing};
@@ -235,7 +267,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_subtle};
         border-radius: 4px;
         color: {t.text_muted};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 10px;
         font-weight: 500;
         padding: 1px 6px;
@@ -352,7 +384,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
 
     #TaskTimerLabel {{
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 12px;
         font-weight: 600;
         color: {t.status_doing};
@@ -375,7 +407,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
 
     #SubStepCountLabel {{
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 10.5px;
         font-weight: 500;
         color: {t.text_muted};
@@ -449,7 +481,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         background-color: {t.tint_accent};
         border: 1px solid {t.tint_accent_border};
         color: {t.status_doing};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-weight: 600;
     }}
 
@@ -517,7 +549,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_subtle};
         border-radius: 11px;
         color: {t.text_secondary};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 10.5px;
         font-weight: 500;
         padding: 0px 9px;
@@ -532,13 +564,13 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_focus};
         border-radius: 6px;
         color: {t.text_primary};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 11px;
         padding: 2px 8px;
     }}
 
     #SessionRowLabel {{
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 11px;
         color: {t.text_secondary};
         background: transparent;
@@ -592,7 +624,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         background: transparent;
     }}
     #HeroMetricValue {{
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 22px;
         font-weight: 600;
         color: {t.text_primary};
@@ -613,7 +645,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border-bottom: 1px solid {t.border_subtle};
     }}
     #SummaryDurationLabel {{
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 12px;
         font-weight: 600;
         color: {t.text_primary};
@@ -681,7 +713,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_subtle};
         border-radius: 6px;
         color: {t.text_primary};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 11px;
         font-weight: 600;
         padding: 0px 10px;
@@ -703,7 +735,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_subtle};
         border-radius: 6px;
         color: {t.text_primary};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 12px;
         font-weight: 500;
         padding: 2px 24px 2px 10px;
@@ -755,14 +787,14 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: none;
         border-radius: 3px;
         color: {t.text_secondary};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 9.5px;
         font-weight: 600;
         padding: 0px 4px;
     }}
     #HintVerbLabel {{
         color: {t.text_muted};
-        font-family: "Segoe UI";
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 10px;
         background: transparent;
     }}
