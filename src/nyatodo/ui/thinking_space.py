@@ -1,10 +1,20 @@
 """Expandable Thinking Space accordion for Title, Requester, Notes, Sub-steps, and Work Sessions."""
 
-import re
+from collections.abc import Callable
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPen
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPropertyAnimation,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QColor, QEnterEvent, QKeyEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QFrame,
@@ -23,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from nyatodo.domain import SubStep, Task, TaskStatus, WorkSession
 from nyatodo.ui.icons import create_close_icon, create_play_icon, create_stop_icon
+from nyatodo.ui.qt_helpers import clear_layout, set_qss_property
 from nyatodo.ui.theme import (
     DARK_TOKENS,
     ColorTokens,
@@ -30,41 +41,6 @@ from nyatodo.ui.theme import (
     make_mono_font,
     make_ui_font,
 )
-
-_DURATION_PART_RE = re.compile(r"^\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?\s*$", re.I)
-_COLON_DURATION_RE = re.compile(r"^\s*(\d+):(\d{1,2})\s*$")
-
-
-def parse_manual_duration(raw: str) -> int | None:
-    """Parse manual duration expressions like '25m', '1h15m', '1:15', or '25' into seconds."""
-    stripped = raw.strip()
-    if not stripped:
-        return None
-
-    if stripped.isdigit():
-        minutes = int(stripped)
-        return minutes * 60 if minutes > 0 else None
-
-    colon_match = _COLON_DURATION_RE.match(stripped)
-    if colon_match:
-        hours = int(colon_match.group(1))
-        minutes = int(colon_match.group(2))
-        if minutes >= 60:
-            return None
-        total = hours * 3600 + minutes * 60
-        return total if total > 0 else None
-
-    part_match = _DURATION_PART_RE.match(stripped)
-    if part_match:
-        h_str, m_str, s_str = part_match.groups()
-        if any(part is not None for part in (h_str, m_str, s_str)):
-            hours = int(h_str or 0)
-            minutes = int(m_str or 0)
-            seconds = int(s_str or 0)
-            total = hours * 3600 + minutes * 60 + seconds
-            return total if total > 0 else None
-
-    return None
 
 
 def _format_session_duration_short(seconds: int) -> str:
@@ -83,6 +59,7 @@ class _SubStepCheckBox(QAbstractButton):
 
     def __init__(self, checked: bool, tokens: ColorTokens, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("SubStepCheckBox")
         self.setCheckable(True)
         self.setChecked(checked)
         self.setFixedSize(16, 16)
@@ -114,7 +91,30 @@ class _SubStepCheckBox(QAbstractButton):
         painter.end()
 
 
-class _SubStepRowWidget(QWidget):
+class _HoverDeleteRow(QWidget):
+    """Row widget revealing its delete button only while hovered."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._hover_delete_button: QToolButton | None = None
+
+    def register_delete_button(self, button: QToolButton) -> None:
+        """Bind the hover-revealed delete button and start hidden."""
+        self._hover_delete_button = button
+        button.setVisible(False)
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        if self._hover_delete_button is not None:
+            self._hover_delete_button.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        if self._hover_delete_button is not None:
+            self._hover_delete_button.setVisible(False)
+        super().leaveEvent(event)
+
+
+class _SubStepRowWidget(_HoverDeleteRow):
     """Single checkable and inline-editable Sub-step row."""
 
     toggled = Signal(str)
@@ -129,6 +129,7 @@ class _SubStepRowWidget(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("SubStepRow")
         self.setFixedHeight(26)
         self._step = step
 
@@ -143,7 +144,7 @@ class _SubStepRowWidget(QWidget):
 
         self.title_edit = QLineEdit(step.title, self)
         self.title_edit.setObjectName("SubStepTitleEdit")
-        self.title_edit.setProperty("done", step.is_done)
+        set_qss_property(self.title_edit, "done", step.is_done)
         font = make_ui_font(12)
         font.setStrikeOut(step.is_done)
         self.title_edit.setFont(font)
@@ -158,6 +159,7 @@ class _SubStepRowWidget(QWidget):
         self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_button.clicked.connect(lambda: self.deleted.emit(self._step.id))
         layout.addWidget(self.delete_button)
+        self.register_delete_button(self.delete_button)
 
     def _commit_rename(self) -> None:
         text = " ".join(self.title_edit.text().split())
@@ -166,6 +168,45 @@ class _SubStepRowWidget(QWidget):
             return
         if text != self._step.title:
             self.renamed.emit(self._step.id, text)
+
+
+class _WorkSessionRowWidget(_HoverDeleteRow):
+    """Single recorded Work Session row with hover-only delete button."""
+
+    deleted = Signal(str)
+
+    def __init__(
+        self,
+        session: WorkSession,
+        *,
+        line_text: str,
+        tokens: ColorTokens,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("WorkSessionRow")
+        self.setFixedHeight(22)
+        self.setProperty("session_id", session.id)
+
+        row_layout = QHBoxLayout(self)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+
+        self.line_label = QLabel(line_text, self)
+        self.line_label.setObjectName("SessionRowLabel")
+        self.line_label.setProperty("running", session.is_running)
+        self.line_label.setFont(make_mono_font(11))
+        row_layout.addWidget(self.line_label, 1)
+
+        self.delete_button = QToolButton(self)
+        self.delete_button.setObjectName("RowDeleteButton")
+        self.delete_button.setFixedSize(18, 18)
+        self.delete_button.setIcon(create_close_icon(QColor(tokens.text_muted), 10))
+        self.delete_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_button.clicked.connect(lambda: self.deleted.emit(session.id))
+        row_layout.addWidget(self.delete_button)
+        self.register_delete_button(self.delete_button)
 
 
 class ThinkingSpaceWidget(QFrame):
@@ -181,7 +222,7 @@ class ThinkingSpaceWidget(QFrame):
     sub_step_renamed = Signal(str, str)
     sub_step_deleted = Signal(str)
     time_adjusted = Signal(str, int)
-    manual_session_added = Signal(str, int)
+    manual_session_requested = Signal(str, str)
     session_deleted = Signal(str)
     collapse_requested = Signal()
 
@@ -201,18 +242,36 @@ class ThinkingSpaceWidget(QFrame):
         self._tokens = tokens
         self._loading = False
         self._notes_dirty = False
+        self._collapsing = False
+        self._collapse_callback: Callable[[], None] | None = None
 
         self._notes_timer = QTimer(self)
         self._notes_timer.setSingleShot(True)
         self._notes_timer.setInterval(400)
         self._notes_timer.timeout.connect(self._flush_notes)
 
+        self._height_anim = QPropertyAnimation(self, b"maximumHeight", self)
+        self._height_anim.setDuration(160)
+        self._height_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._height_anim.finished.connect(self._on_height_anim_finished)
+
         root = QVBoxLayout(self)
         root.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         root.setContentsMargins(12, 10, 12, 10)
         root.setSpacing(8)
 
-        # Section A: Title + Requester + Status + Timer button
+        self._build_header_section(root)
+        root.addWidget(self._make_divider())
+        self._build_notes_section(root)
+        root.addWidget(self._make_divider())
+        self._build_sub_steps_section(root)
+        root.addWidget(self._make_divider())
+        self._build_sessions_section(root)
+        self._install_editor_filters()
+
+        self.update_task(task, now=now, tokens=tokens)
+
+    def _build_header_section(self, root: QVBoxLayout) -> None:
         self.title_edit = QLineEdit(self)
         self.title_edit.setObjectName("ThinkingTitleEdit")
         self.title_edit.setFixedHeight(26)
@@ -264,9 +323,8 @@ class ThinkingSpaceWidget(QFrame):
         controls_row.addWidget(self.timer_button)
 
         root.addLayout(controls_row)
-        root.addWidget(self._make_divider())
 
-        # Section B: Notes
+    def _build_notes_section(self, root: QVBoxLayout) -> None:
         notes_header = QHBoxLayout()
         notes_header.setContentsMargins(0, 0, 0, 0)
         notes_title = QLabel("Notes", self)
@@ -287,9 +345,7 @@ class ThinkingSpaceWidget(QFrame):
         self.notes_editor.textChanged.connect(self._on_notes_text_changed)
         root.addWidget(self.notes_editor)
 
-        root.addWidget(self._make_divider())
-
-        # Section C: Sub-steps
+    def _build_sub_steps_section(self, root: QVBoxLayout) -> None:
         self.sub_steps_header = QLabel("Sub-steps", self)
         self.sub_steps_header.setObjectName("SectionLabel")
         root.addWidget(self.sub_steps_header)
@@ -312,9 +368,7 @@ class ThinkingSpaceWidget(QFrame):
         self.add_sub_step_input.returnPressed.connect(self._on_add_sub_step)
         root.addWidget(self.add_sub_step_input)
 
-        root.addWidget(self._make_divider())
-
-        # Section D: Work Sessions
+    def _build_sessions_section(self, root: QVBoxLayout) -> None:
         sessions_header = QHBoxLayout()
         sessions_header.setContentsMargins(0, 0, 0, 0)
         sessions_header.setSpacing(4)
@@ -354,7 +408,7 @@ class ThinkingSpaceWidget(QFrame):
         self.manual_duration_input = QLineEdit(self.manual_entry_row)
         self.manual_duration_input.setObjectName("ManualDurationInput")
         self.manual_duration_input.setFixedHeight(26)
-        self.manual_duration_input.setPlaceholderText("e.g. 25m or 1:15")
+        self.manual_duration_input.setPlaceholderText("25m or 14:10-14:40")
         self.manual_duration_input.returnPressed.connect(self._submit_manual_entry)
         manual_layout.addWidget(self.manual_duration_input, 1)
 
@@ -365,6 +419,11 @@ class ThinkingSpaceWidget(QFrame):
         self.manual_add_button.clicked.connect(self._submit_manual_entry)
         manual_layout.addWidget(self.manual_add_button)
         root.addWidget(self.manual_entry_row)
+
+        self.manual_error_label = QLabel(self)
+        self.manual_error_label.setObjectName("SettingsErrorLabel")
+        self.manual_error_label.setVisible(False)
+        root.addWidget(self.manual_error_label)
 
         self.sessions_scroll = QScrollArea(self)
         self.sessions_scroll.setObjectName("SessionListScroll")
@@ -379,6 +438,7 @@ class ThinkingSpaceWidget(QFrame):
         self.sessions_scroll.setWidget(self.sessions_container)
         root.addWidget(self.sessions_scroll)
 
+    def _install_editor_filters(self) -> None:
         for editor in (
             self.title_edit,
             self.requester_edit,
@@ -387,8 +447,6 @@ class ThinkingSpaceWidget(QFrame):
             self.manual_duration_input,
         ):
             editor.installEventFilter(self)
-
-        self.update_task(task, now=now, tokens=tokens)
 
     @property
     def task_id(self) -> str:
@@ -402,9 +460,45 @@ class ThinkingSpaceWidget(QFrame):
 
     def open_manual_entry(self) -> None:
         """Reveal and focus the inline manual Work Session input."""
+        self.manual_error_label.setVisible(False)
         self.manual_entry_row.setVisible(True)
         self.manual_duration_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self.manual_duration_input.selectAll()
+
+    def clear_manual_entry(self) -> None:
+        """Clear and collapse the manual Work Session entry row."""
+        self.manual_duration_input.clear()
+        self.manual_error_label.setVisible(False)
+        self.manual_entry_row.setVisible(False)
+
+    def show_manual_error(self, message: str) -> None:
+        """Display an actionable validation error for manual Work Session entry."""
+        self.manual_error_label.setText(message)
+        self.manual_error_label.setVisible(True)
+
+    def animate_expand(self) -> None:
+        """Animate Thinking Space reveal over 160ms OutCubic."""
+        self._height_anim.stop()
+        self._collapsing = False
+        self._collapse_callback = None
+        self.setMaximumHeight(16777215)
+        target_height = max(120, self.sizeHint().height())
+        self.setMaximumHeight(0)
+        self._height_anim.setStartValue(0)
+        self._height_anim.setEndValue(target_height)
+        self._height_anim.start()
+
+    def animate_collapse(self, on_finished: Callable[[], None]) -> None:
+        """Animate Thinking Space collapse over 160ms OutCubic and invoke on_finished."""
+        if self._collapsing:
+            return
+        self._height_anim.stop()
+        self._collapsing = True
+        self._collapse_callback = on_finished
+        start_height = max(self.height(), self.sizeHint().height())
+        self._height_anim.setStartValue(start_height)
+        self._height_anim.setEndValue(0)
+        self._height_anim.start()
 
     def flush_pending_saves(self) -> None:
         """Immediately flush debounced notes and inline title/requester edits."""
@@ -431,9 +525,7 @@ class ThinkingSpaceWidget(QFrame):
                 self.saved_label.setText("Saved")
 
             for status_val, btn in self._status_buttons.items():
-                btn.setProperty("active", task.status == status_val)
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+                set_qss_property(btn, "active", task.status == status_val)
 
             self._rebuild_sub_steps()
             self._rebuild_sessions()
@@ -448,15 +540,14 @@ class ThinkingSpaceWidget(QFrame):
         self.sessions_header_label.setText(f"Work Sessions · {format_hms(total_secs)}")
 
         if self._task.is_timer_running:
-            self.timer_button.setText(f"Stop {format_hms(total_secs)}")
+            active_secs = self._task.active_session_seconds(now=now)
+            self.timer_button.setText(f"Stop {format_hms(active_secs)}")
             self.timer_button.setIcon(create_stop_icon(QColor(self._tokens.status_doing), 12))
-            self.timer_button.setProperty("running", True)
+            set_qss_property(self.timer_button, "running", True)
         else:
             self.timer_button.setText("Start Timer")
             self.timer_button.setIcon(create_play_icon(QColor(self._tokens.text_primary), 12))
-            self.timer_button.setProperty("running", False)
-        self.timer_button.style().unpolish(self.timer_button)
-        self.timer_button.style().polish(self.timer_button)
+            set_qss_property(self.timer_button, "running", False)
 
         for idx in range(self.sessions_layout.count()):
             item = self.sessions_layout.itemAt(idx)
@@ -494,6 +585,16 @@ class ThinkingSpaceWidget(QFrame):
             self._notes_timer.stop()
             self._flush_notes()
         return super().eventFilter(watched, event)
+
+    def _on_height_anim_finished(self) -> None:
+        if self._collapsing:
+            self._collapsing = False
+            callback = self._collapse_callback
+            self._collapse_callback = None
+            if callback is not None:
+                callback()
+            return
+        self.setMaximumHeight(16777215)
 
     def _make_divider(self) -> QFrame:
         line = QFrame(self)
@@ -544,21 +645,14 @@ class ThinkingSpaceWidget(QFrame):
         self.add_sub_step_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def _submit_manual_entry(self) -> None:
-        seconds = parse_manual_duration(self.manual_duration_input.text())
-        if seconds is None:
+        raw = self.manual_duration_input.text().strip()
+        if not raw:
             return
-        self.manual_duration_input.clear()
-        self.manual_entry_row.setVisible(False)
-        self.manual_session_added.emit(self._task.id, seconds)
+        self.manual_error_label.setVisible(False)
+        self.manual_session_requested.emit(self._task.id, raw)
 
     def _rebuild_sub_steps(self) -> None:
-        while self.sub_steps_layout.count():
-            item = self.sub_steps_layout.takeAt(0)
-            if item is not None and item.widget() is not None:
-                widget = item.widget()
-                assert widget is not None
-                widget.setParent(None)
-                widget.deleteLater()
+        clear_layout(self.sub_steps_layout)
 
         done_count = self._task.completed_sub_steps_count
         total_count = len(self._task.sub_steps)
@@ -571,23 +665,12 @@ class ThinkingSpaceWidget(QFrame):
             row.deleted.connect(self.sub_step_deleted)
             row.title_edit.installEventFilter(self)
             self.sub_steps_layout.addWidget(row)
+            row.show()
 
     def _rebuild_sessions(self) -> None:
-        while self.sessions_layout.count():
-            item = self.sessions_layout.takeAt(0)
-            if item is not None and item.widget() is not None:
-                widget = item.widget()
-                assert widget is not None
-                widget.setParent(None)
-                widget.deleteLater()
+        clear_layout(self.sessions_layout)
 
-        sessions = sorted(
-            self._task.work_sessions,
-            key=lambda s: (not s.is_running, s.started_at),
-            reverse=False,
-        )
-        # Show newest / active first
-        ordered = sorted(sessions, key=lambda s: s.started_at, reverse=True)
+        ordered = sorted(self._task.work_sessions, key=lambda s: s.started_at, reverse=True)
         ordered.sort(key=lambda s: not s.is_running)
 
         if not ordered:
@@ -598,30 +681,15 @@ class ThinkingSpaceWidget(QFrame):
             return
 
         for session in ordered:
-            row = QWidget(self.sessions_container)
-            row.setFixedHeight(22)
-            row.setProperty("session_id", session.id)
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
-
-            label = QLabel(self._format_session_line(session, now=self._now), row)
-            label.setObjectName("SessionRowLabel")
-            label.setProperty("running", session.is_running)
-            label.setFont(make_mono_font(11))
-            row_layout.addWidget(label, 1)
-
-            delete_btn = QToolButton(row)
-            delete_btn.setObjectName("RowDeleteButton")
-            delete_btn.setFixedSize(18, 18)
-            delete_btn.setIcon(create_close_icon(QColor(self._tokens.text_muted), 10))
-            delete_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            delete_btn.clicked.connect(
-                lambda _checked=False, sid=session.id: self.session_deleted.emit(sid)
+            row = _WorkSessionRowWidget(
+                session,
+                line_text=self._format_session_line(session, now=self._now),
+                tokens=self._tokens,
+                parent=self.sessions_container,
             )
-            row_layout.addWidget(delete_btn)
+            row.deleted.connect(self.session_deleted)
             self.sessions_layout.addWidget(row)
+            row.show()
 
         visible_rows = min(4, len(ordered))
         self.sessions_scroll.setFixedHeight(visible_rows * 24 + 4)

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
@@ -25,6 +25,12 @@ class IdleBanner(QFrame):
 
         self._tokens: ColorTokens = DARK_TOKENS
         self._idle_started_at: datetime | None = None
+        self._dismissing = False
+
+        self._height_anim = QPropertyAnimation(self, b"maximumHeight", self)
+        self._height_anim.setDuration(160)
+        self._height_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._height_anim.finished.connect(self._on_height_anim_finished)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -65,7 +71,7 @@ class IdleBanner(QFrame):
         self.icon_label.setPixmap(create_clock_pixmap(QColor(tokens.status_waiting), 14))
 
     def show_idle_gap(self, gap: IdleGap, task_titles: list[str]) -> None:
-        """Populate and display the Idle Check banner without stealing keyboard focus."""
+        """Populate and reveal the Idle Check banner without stealing keyboard focus."""
         self._idle_started_at = gap.idle_started_at
         idle_minutes = max(1, gap.idle_seconds // 60)
 
@@ -78,12 +84,39 @@ class IdleBanner(QFrame):
 
         self.message_label.setText(f"Idle for {idle_minutes}m on {target}. Keep or trim?")
         self.trim_button.setText(f"Trim {idle_minutes}m")
+
+        self._height_anim.stop()
+        self._dismissing = False
+        self.setMaximumHeight(16777215)
+        target_height = max(40, self.sizeHint().height())
+        self.setMaximumHeight(0)
         self.setVisible(True)
+        self._height_anim.setStartValue(0)
+        self._height_anim.setEndValue(target_height)
+        self._height_anim.start()
 
     def dismiss(self) -> None:
-        """Hide the Idle Check banner and clear pending state."""
+        """Animate-collapse and hide the Idle Check banner, clearing pending state."""
         self._idle_started_at = None
-        self.setVisible(False)
+        if not self.isVisible():
+            self._height_anim.stop()
+            self._dismissing = False
+            self.setMaximumHeight(16777215)
+            return
+        if self._dismissing:
+            return
+        self._height_anim.stop()
+        self._dismissing = True
+        start_height = max(self.height(), 1)
+        self._height_anim.setStartValue(start_height)
+        self._height_anim.setEndValue(0)
+        self._height_anim.start()
+
+    def _on_height_anim_finished(self) -> None:
+        if self._dismissing:
+            self._dismissing = False
+            self.setVisible(False)
+        self.setMaximumHeight(16777215)
 
     def _on_keep_clicked(self) -> None:
         self.dismiss()

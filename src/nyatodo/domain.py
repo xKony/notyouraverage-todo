@@ -140,6 +140,11 @@ class Task:
                 return session
         return None
 
+    def active_session_seconds(self, now: datetime | None = None) -> int:
+        """Return elapsed seconds of the currently running Work Session, or 0 if stopped."""
+        session = self.active_session
+        return 0 if session is None else session.duration_seconds(now=now)
+
     def total_logged_seconds(self, now: datetime | None = None) -> int:
         """Return summed seconds across all Work Sessions on this Task."""
         return sum(session.duration_seconds(now=now) for session in self.work_sessions)
@@ -191,6 +196,7 @@ class IdleGap:
     idle_seconds: int
     idle_started_at: datetime
     affected_task_ids: tuple[str, ...]
+    detected_at: datetime | None = None
 
 
 def clip_session_interval(

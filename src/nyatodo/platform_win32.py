@@ -3,7 +3,7 @@
 import ctypes
 import sys
 from ctypes import wintypes
-from typing import Protocol
+from typing import Protocol, SupportsIndex, SupportsInt
 
 from nyatodo.domain import ThemeMode
 
@@ -75,8 +75,8 @@ class LASTINPUTINFO(ctypes.Structure):
     )
 
 
-class HotkeyRegistrar(Protocol):
-    """Protocol for registering and unregistering a global OS hotkey."""
+class PlatformBridge(Protocol):
+    """Unified platform boundary injected into TodoService and UI."""
 
     def register_hotkey(self, shortcut: str, *, hotkey_id: int = 1, hwnd: int = 0) -> bool:
         """Register a global shortcut string; return True on success."""
@@ -86,21 +86,38 @@ class HotkeyRegistrar(Protocol):
         """Unregister a previously registered hotkey ID."""
         ...
 
-
-class IdleTimeProvider(Protocol):
-    """Protocol for querying OS user-input idle duration."""
-
     def get_idle_seconds(self) -> float:
         """Return elapsed seconds since last keyboard or mouse input."""
         ...
 
-
-class PlatformBridge(HotkeyRegistrar, IdleTimeProvider, Protocol):
-    """Unified platform boundary injected into TodoService and UI."""
-
     def get_system_theme(self) -> ThemeMode:
         """Return the OS-configured light or dark theme preference."""
         ...
+
+
+def extract_hotkey_id_from_native_message(message: object) -> int | None:
+    """Extract the Win32 WM_HOTKEY identifier from a native Qt MSG pointer or struct."""
+    if isinstance(message, wintypes.MSG):
+        msg = message
+    else:
+        if isinstance(message, bool | str | bytes | bytearray) or not isinstance(
+            message, SupportsInt | SupportsIndex
+        ):
+            return None
+        try:
+            address = int(message)
+        except (ValueError, TypeError, OverflowError):
+            return None
+        if address <= 0:
+            return None
+        try:
+            msg = wintypes.MSG.from_address(address)
+        except (ValueError, TypeError, OSError):
+            return None
+
+    if int(msg.message) != WM_HOTKEY:
+        return None
+    return int(msg.wParam)
 
 
 class _User32API(Protocol):

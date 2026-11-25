@@ -1,11 +1,14 @@
 """Centered Settings modal overlay for Theme, Shortcut, Hints, and Idle threshold."""
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from dataclasses import replace
+
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -16,6 +19,7 @@ from PySide6.QtWidgets import (
 from nyatodo.domain import IdleThreshold, Settings, ThemeMode
 from nyatodo.platform_win32 import parse_hotkey
 from nyatodo.ui.icons import create_close_icon
+from nyatodo.ui.qt_helpers import set_qss_property
 from nyatodo.ui.theme import DARK_TOKENS, ColorTokens, make_mono_font, make_ui_font
 
 _IDLE_OPTIONS: tuple[tuple[str, IdleThreshold], ...] = (
@@ -161,21 +165,63 @@ class SettingsOverlay(QWidget):
         self._loading = False
         self._capturing_shortcut = False
 
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._fade_anim.setDuration(100)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.modal_card = QFrame(self)
-        self.modal_card.setObjectName("SettingsModal")
-        self.modal_card.setFixedWidth(360)
-        card_layout = QVBoxLayout(self.modal_card)
+        self.modal_card = self._build_modal_card()
+        outer.addWidget(self.modal_card)
+        self.apply_theme(DARK_TOKENS)
+
+    def _build_modal_card(self) -> QFrame:
+        card = QFrame(self)
+        card.setObjectName("SettingsModal")
+        card.setFixedWidth(360)
+        card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 16, 16, 16)
         card_layout.setSpacing(0)
 
-        # Header
+        card_layout.addLayout(self._build_header(card))
+
+        theme_track = self._build_theme_control(card)
+        card_layout.addWidget(self._make_divider(card))
+        card_layout.addLayout(self._make_setting_row(card, "Theme", theme_track))
+
+        self.shortcut_button = self._build_shortcut_control(card)
+        card_layout.addWidget(self._make_divider(card))
+        card_layout.addLayout(self._make_setting_row(card, "Global Shortcut", self.shortcut_button))
+
+        self.shortcut_error_label = QLabel(card)
+        self.shortcut_error_label.setObjectName("SettingsErrorLabel")
+        self.shortcut_error_label.setVisible(False)
+        card_layout.addWidget(self.shortcut_error_label)
+
+        self.hints_switch = ToggleSwitch(card)
+        self.hints_switch.toggled.connect(self._on_hints_toggled)
+        card_layout.addWidget(self._make_divider(card))
+        card_layout.addLayout(
+            self._make_setting_row(card, "Show Shortcut Hints", self.hints_switch)
+        )
+
+        self.idle_combo = self._build_idle_control(card)
+        card_layout.addWidget(self._make_divider(card))
+        card_layout.addLayout(self._make_setting_row(card, "Idle Check Threshold", self.idle_combo))
+
+        card_layout.addWidget(self._make_divider(card))
+        card_layout.addLayout(self._build_footer(card))
+        return card
+
+    def _build_header(self, card: QFrame) -> QHBoxLayout:
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 12)
-        title_label = QLabel("Settings", self.modal_card)
+        title_label = QLabel("Settings", card)
         title_label.setObjectName("SettingsTitle")
         header_font = make_ui_font(14)
         header_font.setWeight(header_font.Weight.DemiBold)
@@ -183,17 +229,17 @@ class SettingsOverlay(QWidget):
         header_row.addWidget(title_label)
         header_row.addStretch(1)
 
-        self.close_button = QPushButton(self.modal_card)
+        self.close_button = QPushButton(card)
         self.close_button.setObjectName("SettingsButton")
         self.close_button.setFixedSize(24, 24)
         self.close_button.setIconSize(QSize(12, 12))
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_button.clicked.connect(self.close_modal)
         header_row.addWidget(self.close_button)
-        card_layout.addLayout(header_row)
+        return header_row
 
-        # Row 1: Theme
-        theme_track = QFrame(self.modal_card)
+    def _build_theme_control(self, card: QFrame) -> QFrame:
+        theme_track = QFrame(card)
         theme_track.setObjectName("SettingsSegmentTrack")
         theme_track.setFixedHeight(28)
         track_layout = QHBoxLayout(theme_track)
@@ -209,60 +255,39 @@ class SettingsOverlay(QWidget):
             btn.clicked.connect(lambda _checked=False, m=mode: self._select_theme(m))
             self._theme_buttons[mode] = btn
             track_layout.addWidget(btn)
+        return theme_track
 
-        card_layout.addWidget(self._make_divider())
-        card_layout.addLayout(self._make_setting_row("Theme", theme_track))
+    def _build_shortcut_control(self, card: QFrame) -> QPushButton:
+        btn = QPushButton(self._settings.global_shortcut, card)
+        btn.setObjectName("ShortcutCaptureButton")
+        btn.setFixedHeight(26)
+        btn.setMinimumWidth(138)
+        btn.setFont(make_mono_font(11))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(self._begin_shortcut_capture)
+        return btn
 
-        # Row 2: Global Shortcut
-        self.shortcut_button = QPushButton(self._settings.global_shortcut, self.modal_card)
-        self.shortcut_button.setObjectName("ShortcutCaptureButton")
-        self.shortcut_button.setFixedHeight(26)
-        self.shortcut_button.setMinimumWidth(138)
-        self.shortcut_button.setFont(make_mono_font(11))
-        self.shortcut_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.shortcut_button.clicked.connect(self._begin_shortcut_capture)
-
-        card_layout.addWidget(self._make_divider())
-        card_layout.addLayout(self._make_setting_row("Global Shortcut", self.shortcut_button))
-
-        self.shortcut_error_label = QLabel(self.modal_card)
-        self.shortcut_error_label.setObjectName("SettingsErrorLabel")
-        self.shortcut_error_label.setVisible(False)
-        card_layout.addWidget(self.shortcut_error_label)
-
-        # Row 3: Show Shortcut Hints
-        self.hints_switch = ToggleSwitch(self.modal_card)
-        self.hints_switch.toggled.connect(self._on_hints_toggled)
-        card_layout.addWidget(self._make_divider())
-        card_layout.addLayout(self._make_setting_row("Show Shortcut Hints", self.hints_switch))
-
-        # Row 4: Idle Check Threshold
-        self.idle_combo = QComboBox(self.modal_card)
-        self.idle_combo.setObjectName("IdleThresholdCombo")
-        self.idle_combo.setFixedHeight(28)
-        self.idle_combo.setMinimumWidth(92)
+    def _build_idle_control(self, card: QFrame) -> QComboBox:
+        combo = QComboBox(card)
+        combo.setObjectName("IdleThresholdCombo")
+        combo.setFixedHeight(28)
+        combo.setMinimumWidth(92)
         for label, threshold in _IDLE_OPTIONS:
-            self.idle_combo.addItem(label, threshold)
-        self.idle_combo.currentIndexChanged.connect(self._on_idle_changed)
-        card_layout.addWidget(self._make_divider())
-        card_layout.addLayout(self._make_setting_row("Idle Check Threshold", self.idle_combo))
+            combo.addItem(label, threshold)
+        combo.currentIndexChanged.connect(self._on_idle_changed)
+        return combo
 
-        card_layout.addWidget(self._make_divider())
-
-        # Footer
+    def _build_footer(self, card: QFrame) -> QHBoxLayout:
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 14, 0, 0)
         footer.addStretch(1)
-        self.done_button = QPushButton("Done", self.modal_card)
+        self.done_button = QPushButton("Done", card)
         self.done_button.setObjectName("SettingsDoneButton")
         self.done_button.setFixedHeight(28)
         self.done_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.done_button.clicked.connect(self.close_modal)
         footer.addWidget(self.done_button)
-        card_layout.addLayout(footer)
-
-        outer.addWidget(self.modal_card)
-        self.apply_theme(DARK_TOKENS)
+        return footer
 
     def is_capturing_shortcut(self) -> bool:
         """Return True while waiting for user to press a new Global Shortcut."""
@@ -294,12 +319,19 @@ class SettingsOverlay(QWidget):
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
+        self._fade_anim.stop()
+        self._opacity_effect.setOpacity(0.0)
         self.setVisible(True)
         self.raise_()
         self.done_button.setFocus(Qt.FocusReason.PopupFocusReason)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.start()
 
     def close_modal(self) -> None:
         """Cancel any active capture and hide the Settings modal."""
+        self._fade_anim.stop()
+        self._opacity_effect.setOpacity(1.0)
         self._capturing_shortcut = False
         self._update_shortcut_button()
         self.shortcut_error_label.setVisible(False)
@@ -345,14 +377,7 @@ class SettingsOverlay(QWidget):
 
             self._capturing_shortcut = False
             self.shortcut_error_label.setVisible(False)
-            self._emit_updated(
-                Settings(
-                    theme=self._settings.theme,
-                    global_shortcut=combo,
-                    show_shortcut_hints=self._settings.show_shortcut_hints,
-                    idle_threshold=self._settings.idle_threshold,
-                )
-            )
+            self._emit_updated(replace(self._settings, global_shortcut=combo))
             self._update_shortcut_button()
             event.accept()
             return
@@ -370,17 +395,17 @@ class SettingsOverlay(QWidget):
             return
         super().mousePressEvent(event)
 
-    def _make_divider(self) -> QFrame:
-        line = QFrame(self.modal_card)
+    def _make_divider(self, card: QFrame) -> QFrame:
+        line = QFrame(card)
         line.setObjectName("SectionDivider")
         line.setFrameShape(QFrame.Shape.HLine)
         return line
 
-    def _make_setting_row(self, label_text: str, control: QWidget) -> QHBoxLayout:
+    def _make_setting_row(self, card: QFrame, label_text: str, control: QWidget) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setContentsMargins(0, 10, 0, 10)
         row.setSpacing(12)
-        label = QLabel(label_text, self.modal_card)
+        label = QLabel(label_text, card)
         label.setObjectName("SettingsRowLabel")
         label.setFont(make_ui_font(13))
         row.addWidget(label)
@@ -391,14 +416,7 @@ class SettingsOverlay(QWidget):
     def _select_theme(self, mode: ThemeMode) -> None:
         if mode == self._settings.theme:
             return
-        self._emit_updated(
-            Settings(
-                theme=mode,
-                global_shortcut=self._settings.global_shortcut,
-                show_shortcut_hints=self._settings.show_shortcut_hints,
-                idle_threshold=self._settings.idle_threshold,
-            )
-        )
+        self._emit_updated(replace(self._settings, theme=mode))
         self._update_theme_buttons()
 
     def _begin_shortcut_capture(self) -> None:
@@ -410,14 +428,7 @@ class SettingsOverlay(QWidget):
     def _on_hints_toggled(self, checked: bool) -> None:
         if self._loading:
             return
-        self._emit_updated(
-            Settings(
-                theme=self._settings.theme,
-                global_shortcut=self._settings.global_shortcut,
-                show_shortcut_hints=checked,
-                idle_threshold=self._settings.idle_threshold,
-            )
-        )
+        self._emit_updated(replace(self._settings, show_shortcut_hints=checked))
 
     def _on_idle_changed(self, index: int) -> None:
         if self._loading or index < 0:
@@ -425,14 +436,7 @@ class SettingsOverlay(QWidget):
         threshold = self.idle_combo.itemData(index)
         if not isinstance(threshold, IdleThreshold):
             return
-        self._emit_updated(
-            Settings(
-                theme=self._settings.theme,
-                global_shortcut=self._settings.global_shortcut,
-                show_shortcut_hints=self._settings.show_shortcut_hints,
-                idle_threshold=threshold,
-            )
-        )
+        self._emit_updated(replace(self._settings, idle_threshold=threshold))
 
     def _emit_updated(self, new_settings: Settings) -> None:
         self._settings = new_settings
@@ -440,14 +444,10 @@ class SettingsOverlay(QWidget):
 
     def _update_theme_buttons(self) -> None:
         for mode, btn in self._theme_buttons.items():
-            btn.setProperty("active", mode == self._settings.theme)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+            set_qss_property(btn, "active", mode == self._settings.theme)
 
     def _update_shortcut_button(self) -> None:
-        self.shortcut_button.setProperty("capturing", self._capturing_shortcut)
+        set_qss_property(self.shortcut_button, "capturing", self._capturing_shortcut)
         self.shortcut_button.setText(
             "Press shortcut..." if self._capturing_shortcut else self._settings.global_shortcut
         )
-        self.shortcut_button.style().unpolish(self.shortcut_button)
-        self.shortcut_button.style().polish(self.shortcut_button)

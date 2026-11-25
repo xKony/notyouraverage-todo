@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from enum import Enum, auto
 
 from nyatodo.domain import (
@@ -14,11 +14,17 @@ from nyatodo.domain import (
     Task,
     TaskDayBreakdown,
     TaskStatus,
+    ThemeMode,
     WorkSession,
     clip_session_interval,
     compute_wall_clock_seconds,
 )
-from nyatodo.parser import extract_search_query, is_search_input, parse_quick_input
+from nyatodo.parser import (
+    extract_search_query,
+    is_search_input,
+    parse_manual_session_input,
+    parse_quick_input,
+)
 from nyatodo.platform_win32 import PlatformBridge, parse_hotkey
 from nyatodo.storage import SQLiteRepository
 
@@ -43,10 +49,16 @@ class TodoService:
         *,
         clock: Callable[[], datetime] = _default_clock,
         platform: PlatformBridge | None = None,
+        local_tz: tzinfo | None = None,
     ) -> None:
         self._repo = repository
         self._clock = clock
         self._platform = platform
+        self._local_tz: tzinfo = (
+            local_tz if local_tz is not None else (datetime.now().astimezone().tzinfo or UTC)
+        )
+        self._pending_idle_started_at: datetime | None = None
+        self._last_idle_seconds: float = 0.0
 
     def add_task_from_input(self, raw: str) -> Task | None:
         """Parse Quick Bar text and create a new Todo Task, or return None if empty."""
@@ -87,21 +99,40 @@ class TodoService:
         """Return Waiting Tasks in deterministic sort order."""
         return self._repo.list_tasks(TaskStatus.WAITING)
 
-    def search_tasks(self, query: str, *, include_done: bool = True) -> list[Task]:
-        """Filter Tasks case-insensitively by title or requester (supports leading '/')."""
-        clean = extract_search_query(query) if is_search_input(query) else " ".join(query.split())
+    def search_tasks(self, raw_query: str, *, include_done: bool = True) -> list[Task]:
+        """Filter Tasks case-insensitively by title and/or @requester (supports leading '/')."""
+        clean = (
+            extract_search_query(raw_query)
+            if is_search_input(raw_query)
+            else " ".join(raw_query.split())
+        )
         tasks = self._repo.list_tasks()
         if not include_done:
             tasks = [task for task in tasks if task.status != TaskStatus.DONE]
         if not clean:
             return tasks
 
-        needle = clean.lower()
+        if clean == "@":
+            return [task for task in tasks if task.requester is not None]
+
+        parsed = parse_quick_input(clean)
+        title_needle = parsed.title.lower()
+        requester_needle = parsed.requester.lower() if parsed.requester is not None else None
+
+        if requester_needle is not None:
+            return [
+                task
+                for task in tasks
+                if (not title_needle or title_needle in task.title.lower())
+                and task.requester is not None
+                and requester_needle in task.requester.lower()
+            ]
+
         return [
             task
             for task in tasks
-            if needle in task.title.lower()
-            or (task.requester is not None and needle in task.requester.lower())
+            if title_needle in task.title.lower()
+            or (task.requester is not None and title_needle in task.requester.lower())
         ]
 
     def update_task(
@@ -354,16 +385,39 @@ class TodoService:
         self._repo.save_task(replace(task, updated_at=now))
         return session
 
+    def add_manual_session_from_input(self, task_id: str, raw: str) -> WorkSession:
+        """Parse manual duration or time-range text and record a manual Work Session."""
+        self._require_task(task_id)
+        now = self._clock()
+        aware_now = now if now.tzinfo is not None else now.replace(tzinfo=self._local_tz)
+        local_now = aware_now.astimezone(self._local_tz)
+        spec = parse_manual_session_input(
+            raw,
+            reference_day=local_now.date(),
+            tzinfo=self._local_tz,
+        )
+        if spec.started_at is not None and spec.ended_at is not None:
+            return self.add_manual_session(
+                task_id,
+                0,
+                started_at=spec.started_at,
+                ended_at=spec.ended_at,
+            )
+        if spec.duration_seconds is None:
+            raise ValueError(f"Invalid manual Work Session input: {raw!r}")
+        return self.add_manual_session(task_id, spec.duration_seconds)
+
     def delete_work_session(self, session_id: str) -> None:
         """Delete a single Work Session by ID."""
         self._repo.delete_work_session(session_id)
 
     def get_daily_summary(self, day: date) -> DailySummary:
-        """Compute per-Task breakdown, wall-clock active seconds, and overlap for a day."""
-        now = self._clock()
-        tz = now.tzinfo or UTC
+        """Compute per-Task breakdown, wall-clock active seconds, and overlap for a local day."""
+        raw_now = self._clock()
+        tz = self._local_tz
+        now = raw_now if raw_now.tzinfo is not None else raw_now.replace(tzinfo=tz)
         day_start = datetime.combine(day, time.min, tzinfo=tz)
-        day_end = day_start + timedelta(days=1)
+        day_end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
 
         tasks = self._repo.list_tasks()
         all_sessions: list[WorkSession] = []
@@ -409,6 +463,44 @@ class TodoService:
             completed_count=completed_count,
         )
 
+    def poll_idle_gap(self) -> IdleGap | None:
+        """Poll PlatformBridge and emit an IdleGap when user input resumes after idle."""
+        if self._platform is None:
+            self._reset_idle_tracking()
+            return None
+
+        threshold_seconds = self._repo.get_settings().idle_threshold.seconds
+        running = self.get_running_tasks()
+        if threshold_seconds is None or not running:
+            self._reset_idle_tracking()
+            return None
+
+        idle_seconds = self._platform.get_idle_seconds()
+        self._last_idle_seconds = idle_seconds
+        now = self._clock()
+
+        if idle_seconds >= threshold_seconds:
+            if self._pending_idle_started_at is None:
+                self._pending_idle_started_at = now - timedelta(seconds=int(idle_seconds))
+            return None
+
+        if self._pending_idle_started_at is None:
+            return None
+
+        idle_started_at = self._pending_idle_started_at
+        self._pending_idle_started_at = None
+        elapsed_idle = max(0, int((now - idle_started_at).total_seconds()))
+        return IdleGap(
+            idle_seconds=elapsed_idle,
+            idle_started_at=idle_started_at,
+            affected_task_ids=tuple(task.id for task in running),
+            detected_at=now,
+        )
+
+    def _reset_idle_tracking(self) -> None:
+        self._pending_idle_started_at = None
+        self._last_idle_seconds = 0.0
+
     def detect_idle_gap(self, idle_seconds: float | int) -> IdleGap | None:
         """Return an IdleGap if timers are active and idle_seconds meets threshold."""
         threshold_seconds = self._repo.get_settings().idle_threshold.seconds
@@ -419,12 +511,14 @@ class TodoService:
         if not running:
             return None
 
+        now = self._clock()
         whole_idle = int(idle_seconds)
-        idle_started_at = self._clock() - timedelta(seconds=whole_idle)
+        idle_started_at = now - timedelta(seconds=whole_idle)
         return IdleGap(
             idle_seconds=whole_idle,
             idle_started_at=idle_started_at,
             affected_task_ids=tuple(task.id for task in running),
+            detected_at=now,
         )
 
     def resolve_idle_gap(self, *, keep: bool, idle_started_at: datetime) -> list[Task]:
@@ -443,6 +537,12 @@ class TodoService:
     def get_settings(self) -> Settings:
         """Return persisted user Settings."""
         return self._repo.get_settings()
+
+    def get_system_theme(self) -> ThemeMode:
+        """Return the OS-configured theme via PlatformBridge, defaulting to Dark."""
+        if self._platform is None:
+            return ThemeMode.DARK
+        return self._platform.get_system_theme()
 
     def update_settings(self, settings: Settings, *, hotkey_id: int = 1, hwnd: int = 0) -> Settings:
         """Validate, persist, and apply updated user Settings."""

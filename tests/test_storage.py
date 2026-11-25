@@ -1,7 +1,10 @@
 """Tests for SQLiteRepository at the nyatodo.storage seam."""
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from nyatodo.domain import (
     IdleThreshold,
@@ -21,38 +24,42 @@ def test_repository_persists_task_substep_and_open_work_session_across_restarts(
     db_path = tmp_path / "nyatodo.db"
     t0 = datetime(2026, 11, 25, 9, 0, tzinfo=UTC)
 
-    repo = SQLiteRepository(db_path)
-    repo.create_tables()  # Idempotent re-run
-    assert repo.schema_version() >= 1
-    assert repo.journal_mode().lower() == "wal"
+    with SQLiteRepository(db_path) as repo:
+        repo.create_tables()  # Idempotent re-run
+        assert repo.schema_version() >= 1
+        assert repo.journal_mode().lower() == "wal"
 
-    task = Task(
-        id="task-1",
-        title="Investigate memory spike",
-        status=TaskStatus.DOING,
-        requester="Alex",
-        notes="Check SQLite connection lifecycle.",
-        sort_order=0,
-        created_at=t0,
-        updated_at=t0,
-    )
-    repo.save_task(task)
-    repo.save_sub_step(
-        SubStep(id="step-1", task_id="task-1", title="Profile queries", is_done=True, sort_order=0)
-    )
-    repo.save_work_session(
-        WorkSession(
-            id="ws-1",
-            task_id="task-1",
-            started_at=t0 + timedelta(minutes=5),
-            ended_at=None,
+        task = Task(
+            id="task-1",
+            title="Investigate memory spike",
+            status=TaskStatus.DOING,
+            requester="Alex",
+            notes="Check SQLite connection lifecycle.",
+            sort_order=0,
+            created_at=t0,
+            updated_at=t0,
         )
-    )
-    repo.close()
+        repo.save_task(task)
+        repo.save_sub_step(
+            SubStep(
+                id="step-1",
+                task_id="task-1",
+                title="Profile queries",
+                is_done=True,
+                sort_order=0,
+            )
+        )
+        repo.save_work_session(
+            WorkSession(
+                id="ws-1",
+                task_id="task-1",
+                started_at=t0 + timedelta(minutes=5),
+                ended_at=None,
+            )
+        )
 
-    reopened = SQLiteRepository(db_path)
-    loaded = reopened.get_task("task-1")
-    reopened.close()
+    with SQLiteRepository(db_path) as reopened:
+        loaded = reopened.get_task("task-1")
 
     assert loaded is not None
     assert loaded.title == "Investigate memory spike"
@@ -97,3 +104,12 @@ def test_repository_sorting_cascade_delete_and_settings_roundtrip() -> None:
         assert repo.get_sub_step("s1") is None
         assert repo.get_work_session("w1") is None
         assert repo.list_running_sessions() == []
+
+
+def test_repository_context_manager_closes_connection_on_exception() -> None:
+    with pytest.raises(RuntimeError, match="boom"), SQLiteRepository(":memory:") as repo:
+        repo.list_tasks()
+        raise RuntimeError("boom")
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        repo.list_tasks()

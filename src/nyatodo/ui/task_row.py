@@ -2,12 +2,21 @@
 
 from datetime import datetime
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QMouseEvent, QPainter
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QEnterEvent, QFontMetrics, QMouseEvent, QPainter
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QToolButton,
+    QWidget,
+)
 
 from nyatodo.domain import Task, TaskStatus
-from nyatodo.ui.icons import create_status_icon
+from nyatodo.ui.icons import create_close_icon, create_status_icon
+from nyatodo.ui.qt_helpers import set_qss_property
 from nyatodo.ui.theme import (
     DARK_TOKENS,
     ColorTokens,
@@ -52,6 +61,7 @@ class TaskRowWidget(QFrame):
     clicked = Signal(str)
     double_clicked = Signal(str)
     status_clicked = Signal(str)
+    delete_requested = Signal(str)
 
     def __init__(
         self,
@@ -110,6 +120,16 @@ class TaskRowWidget(QFrame):
         self.sub_step_label.setFont(make_mono_font(10))
         meta_layout.addWidget(self.sub_step_label)
 
+        self.delete_button = QToolButton(self)
+        self.delete_button.setObjectName("RowDeleteButton")
+        self.delete_button.setFixedSize(18, 18)
+        self.delete_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_button.setToolTip("Delete task")
+        self.delete_button.setVisible(False)
+        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self._task.id))
+        meta_layout.addWidget(self.delete_button)
+
         layout.addLayout(meta_layout)
 
         self.update_task(task, now=now, tokens=tokens)
@@ -127,9 +147,7 @@ class TaskRowWidget(QFrame):
     def set_selected(self, selected: bool) -> None:
         """Update selection highlight and left 2px accent indicator."""
         self._selected = selected
-        self.setProperty("selected", selected)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(self, "selected", selected)
         self.update()
 
     def update_task(self, task: Task, *, now: datetime, tokens: ColorTokens) -> None:
@@ -138,6 +156,7 @@ class TaskRowWidget(QFrame):
         self._tokens = tokens
 
         self.status_button.setIcon(create_status_icon(task.status, tokens, 16))
+        self.delete_button.setIcon(create_close_icon(QColor(tokens.text_muted), 10))
 
         is_done = task.status == TaskStatus.DONE
         title_font = make_ui_font(13, make_ui_font().weight())
@@ -145,9 +164,7 @@ class TaskRowWidget(QFrame):
         title_font.setStrikeOut(is_done)
         self.title_label.setFont(title_font)
         self.title_label.set_full_text(task.title)
-        self.title_label.setProperty("done", is_done)
-        self.title_label.style().unpolish(self.title_label)
-        self.title_label.style().polish(self.title_label)
+        set_qss_property(self.title_label, "done", is_done)
 
         if task.requester:
             metrics = QFontMetrics(self.requester_pill.font())
@@ -169,19 +186,28 @@ class TaskRowWidget(QFrame):
 
     def refresh_timer(self, *, now: datetime) -> None:
         """Update only the timer readout on 1s ticks without rebuilding widgets."""
-        total_seconds = self._task.total_logged_seconds(now=now)
         if self._task.is_timer_running:
-            self.timer_label.setText(format_hms(total_seconds))
-            self.timer_label.setProperty("paused", False)
+            active_seconds = self._task.active_session_seconds(now=now)
+            self.timer_label.setText(format_hms(active_seconds))
+            set_qss_property(self.timer_label, "paused", False)
             self.timer_label.setVisible(True)
-        elif total_seconds > 0:
+            return
+
+        total_seconds = self._task.total_logged_seconds(now=now)
+        if total_seconds > 0:
             self.timer_label.setText(format_compact_duration(total_seconds))
-            self.timer_label.setProperty("paused", True)
+            set_qss_property(self.timer_label, "paused", True)
             self.timer_label.setVisible(True)
         else:
             self.timer_label.setVisible(False)
-        self.timer_label.style().unpolish(self.timer_label)
-        self.timer_label.style().polish(self.timer_label)
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        self.delete_button.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        self.delete_button.setVisible(False)
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

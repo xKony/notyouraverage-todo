@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QWidget
 
 from nyatodo.parser import is_search_input, parse_quick_input
 from nyatodo.ui.icons import create_plus_pixmap, create_search_pixmap
+from nyatodo.ui.qt_helpers import set_qss_property
 from nyatodo.ui.theme import DARK_TOKENS, ColorTokens, make_mono_font, make_ui_font
 
 
@@ -132,9 +133,7 @@ class QuickBar(QFrame):
         self.focus_input(select_all=False)
 
     def _on_focus_changed(self, focused: bool) -> None:
-        self.setProperty("focused", focused)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(self, "focused", focused)
         self.focus_changed.emit(focused)
 
     def _on_text_changed(self, raw: str) -> None:

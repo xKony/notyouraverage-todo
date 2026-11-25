@@ -1,6 +1,7 @@
 """Tests for PlatformBridge, hotkey parsing, and Win32 ctypes wrappers."""
 
 import ctypes
+from ctypes import wintypes
 
 import pytest
 
@@ -12,8 +13,10 @@ from nyatodo.platform_win32 import (
     MOD_NOREPEAT,
     MOD_SHIFT,
     MOD_WIN,
+    WM_HOTKEY,
     PlatformBridge,
     Win32PlatformBridge,
+    extract_hotkey_id_from_native_message,
     parse_hotkey,
 )
 
@@ -105,3 +108,19 @@ def test_non_windows_fallback_is_safe() -> None:
     bridge.unregister_hotkey(1)
     assert bridge.get_idle_seconds() == 0.0
     assert bridge.get_system_theme() == ThemeMode.DARK
+
+
+def test_extract_hotkey_id_from_native_message() -> None:
+    hotkey_msg = wintypes.MSG()
+    hotkey_msg.message = WM_HOTKEY
+    hotkey_msg.wParam = 42
+    assert extract_hotkey_id_from_native_message(ctypes.addressof(hotkey_msg)) == 42
+    assert extract_hotkey_id_from_native_message(hotkey_msg) == 42
+
+    other_msg = wintypes.MSG()
+    other_msg.message = 0x0100  # WM_KEYDOWN
+    other_msg.wParam = 42
+    assert extract_hotkey_id_from_native_message(ctypes.addressof(other_msg)) is None
+
+    for invalid in (None, 0, -1, "123", True, object()):
+        assert extract_hotkey_id_from_native_message(invalid) is None

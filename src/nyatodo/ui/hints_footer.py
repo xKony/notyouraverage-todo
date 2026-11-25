@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
+from nyatodo.ui.qt_helpers import clear_layout
 from nyatodo.ui.theme import make_mono_font, make_ui_font
 
 
@@ -82,13 +83,7 @@ class HintsFooter(QFrame):
         return self._context
 
     def _rebuild(self) -> None:
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            if item is not None:
-                widget = item.widget()
-                if widget is not None:
-                    widget.setParent(None)
-                    widget.deleteLater()
+        clear_layout(self._layout)
 
         key_font = make_mono_font(10)
         verb_font = make_ui_font(11)

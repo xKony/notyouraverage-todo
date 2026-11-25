@@ -1,10 +1,13 @@
 """Tests for domain interval math and TodoService use cases."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
+
+import pytest
 
 from nyatodo.domain import (
     IdleThreshold,
     Settings,
+    Task,
     TaskStatus,
     ThemeMode,
     WorkSession,
@@ -58,6 +61,37 @@ def test_compute_wall_clock_seconds_merges_overlapping_work_sessions() -> None:
     assert IdleThreshold.FIFTEEN_MIN.minutes == 15
 
 
+def test_task_active_session_seconds_distinguishes_running_vs_total() -> None:
+    t0 = datetime(2026, 11, 25, 10, 0, tzinfo=UTC)
+    stopped_task = Task(
+        id="t1",
+        title="Stopped task",
+        created_at=t0,
+        updated_at=t0,
+        work_sessions=(
+            WorkSession(id="s1", task_id="t1", started_at=t0, ended_at=t0 + timedelta(minutes=20)),
+        ),
+    )
+    assert stopped_task.active_session_seconds(t0 + timedelta(minutes=30)) == 0
+    assert stopped_task.total_logged_seconds(t0 + timedelta(minutes=30)) == 20 * 60
+
+    running_task = Task(
+        id="t2",
+        title="Running task",
+        created_at=t0,
+        updated_at=t0,
+        work_sessions=(
+            WorkSession(id="s1", task_id="t2", started_at=t0, ended_at=t0 + timedelta(minutes=20)),
+            WorkSession(
+                id="s2", task_id="t2", started_at=t0 + timedelta(minutes=30), ended_at=None
+            ),
+        ),
+    )
+    now = t0 + timedelta(minutes=42)
+    assert running_task.active_session_seconds(now) == 12 * 60
+    assert running_task.total_logged_seconds(now) == 32 * 60
+
+
 def test_service_add_search_edit_and_sub_steps() -> None:
     clock = _FakeClock(datetime(2026, 11, 25, 9, 0, tzinfo=UTC))
     with SQLiteRepository(":memory:") as repo:
@@ -73,6 +107,17 @@ def test_service_add_search_edit_and_sub_steps() -> None:
 
         assert [t.id for t in service.search_tasks("/maya")] == [t2.id]
         assert [t.id for t in service.search_tasks("login")] == [t1.id]
+        assert [t.id for t in service.search_tasks("/@maya")] == [t2.id]
+        assert [t.id for t in service.search_tasks("@maya")] == [t2.id]
+        assert [t.id for t in service.search_tasks("/@ma")] == [t2.id]
+        assert [t.id for t in service.search_tasks("Q4 notes @Maya")] == [t2.id]
+        assert [t.id for t in service.search_tasks("/Q4 @maya")] == [t2.id]
+        assert service.search_tasks("login @Maya") == []
+
+        t3 = service.add_task_from_input("Email user@domain.com about API")
+        assert t3 is not None
+        assert [t.id for t in service.search_tasks("user@domain.com")] == [t3.id]
+        assert {t.id for t in service.search_tasks("/@")} == {t1.id, t2.id}
 
         clock.advance(minutes=5)
         updated = service.update_task(t1.id, title="Fix SSO login bug", requester="Sam")
@@ -200,11 +245,38 @@ def test_service_manual_time_adjustments_and_session_deletion() -> None:
         assert reloaded.total_logged_seconds(clock.current) == 0
 
 
+def test_service_add_manual_session_from_input_supports_durations_and_ranges() -> None:
+    local_tz = timezone(timedelta(hours=2))
+    # 2026-11-25 15:00+02:00 (13:00 UTC)
+    clock = _FakeClock(datetime(2026, 11, 25, 13, 0, tzinfo=UTC))
+    with SQLiteRepository(":memory:") as repo:
+        service = TodoService(repo, clock=clock, local_tz=local_tz)
+        task = service.add_task_from_input("Write design doc")
+        assert task is not None
+
+        dur_session = service.add_manual_session_from_input(task.id, "+15m")
+        assert dur_session.is_manual is True
+        assert dur_session.duration_seconds() == 15 * 60
+
+        range_session = service.add_manual_session_from_input(task.id, "14:10 - 14:40")
+        assert range_session.is_manual is True
+        assert range_session.started_at == datetime(2026, 11, 25, 14, 10, tzinfo=local_tz)
+        assert range_session.ended_at == datetime(2026, 11, 25, 14, 40, tzinfo=local_tz)
+        assert range_session.duration_seconds() == 30 * 60
+
+        reloaded = service.get_task(task.id)
+        assert reloaded is not None
+        assert reloaded.total_logged_seconds(clock.current) == 45 * 60
+
+        with pytest.raises(ValueError):
+            service.add_manual_session_from_input(task.id, "14:40-14:10")
+
+
 def test_service_daily_summary_slices_midnight_overlap_and_completed_tasks() -> None:
     # Start on Nov 24 at 23:30
     clock = _FakeClock(datetime(2026, 11, 24, 23, 30, tzinfo=UTC))
     with SQLiteRepository(":memory:") as repo:
-        service = TodoService(repo, clock=clock)
+        service = TodoService(repo, clock=clock, local_tz=UTC)
         t_cross = service.add_task_from_input("Midnight deploy @Ops")
         t_overlap = service.add_task_from_input("Write runbook")
         t_quick_done = service.add_task_from_input("Ping team")
@@ -256,9 +328,40 @@ def test_service_daily_summary_slices_midnight_overlap_and_completed_tasks() -> 
         assert by_id[t_quick_done.id].logged_seconds == 0
 
 
+def test_service_daily_summary_slices_against_local_timezone() -> None:
+    local_tz = timezone(timedelta(hours=2))
+    # 21:30 UTC == 23:30 +02:00 on Nov 24
+    clock = _FakeClock(datetime(2026, 11, 24, 21, 30, tzinfo=UTC))
+    with SQLiteRepository(":memory:") as repo:
+        service = TodoService(repo, clock=clock, local_tz=local_tz)
+        task = service.add_task_from_input("Late evening deploy")
+        assert task is not None
+
+        service.toggle_timer(task.id)
+        clock.advance(minutes=60)  # 22:30 UTC == 00:30 +02:00 on Nov 25
+        service.toggle_timer(task.id)
+        service.toggle_done(task.id)
+
+        nov24 = service.get_daily_summary(date(2026, 11, 24))
+        assert nov24.wall_clock_seconds == 30 * 60
+        assert nov24.total_logged_seconds == 30 * 60
+        assert nov24.completed_count == 0
+
+        nov25 = service.get_daily_summary(date(2026, 11, 25))
+        assert nov25.wall_clock_seconds == 30 * 60
+        assert nov25.total_logged_seconds == 30 * 60
+        assert nov25.completed_count == 1
+
+
 class _FakePlatform:
-    def __init__(self, idle_seconds: float = 0.0) -> None:
+    def __init__(
+        self,
+        idle_seconds: float = 0.0,
+        *,
+        system_theme: ThemeMode = ThemeMode.DARK,
+    ) -> None:
         self.idle_seconds = idle_seconds
+        self.system_theme = system_theme
         self.registered: list[str] = []
         self.unregistered_count = 0
 
@@ -273,7 +376,7 @@ class _FakePlatform:
         return self.idle_seconds
 
     def get_system_theme(self) -> ThemeMode:
-        return ThemeMode.DARK
+        return self.system_theme
 
 
 def test_service_idle_gap_detection_resolution_settings_and_shutdown() -> None:
@@ -329,3 +432,66 @@ def test_service_idle_gap_detection_resolution_settings_and_shutdown() -> None:
         assert stopped_t2 is not None
         assert stopped_t2.is_timer_running is False
         assert stopped_t2.total_logged_seconds(clock.current) == 40 * 60
+
+
+def test_service_poll_idle_gap_triggers_on_resume_and_delegates_system_theme() -> None:
+    clock = _FakeClock(datetime(2026, 11, 25, 14, 0, tzinfo=UTC))
+    platform = _FakePlatform(system_theme=ThemeMode.LIGHT)
+    with SQLiteRepository(":memory:") as repo:
+        service_no_platform = TodoService(repo, clock=clock)
+        assert service_no_platform.get_system_theme() == ThemeMode.DARK
+        assert service_no_platform.poll_idle_gap() is None
+
+        service = TodoService(repo, clock=clock, platform=platform)
+        assert service.get_system_theme() == ThemeMode.LIGHT
+
+        task = service.add_task_from_input("Deep work")
+        assert task is not None
+
+        # No running timers -> resets and returns None even if OS idle is high
+        platform.idle_seconds = 20 * 60
+        assert service.poll_idle_gap() is None
+
+        # Start timer at 14:00, advance 25m -> 14:25, idle for 18m (onset 14:07)
+        platform.idle_seconds = 0.0
+        service.toggle_timer(task.id)
+        assert service.poll_idle_gap() is None
+
+        clock.advance(minutes=25)
+        platform.idle_seconds = 18 * 60
+        # Still idle -> records pending onset, does NOT trigger yet
+        assert service.poll_idle_gap() is None
+
+        # Still idle 5m later -> preserves original onset (14:07)
+        clock.advance(minutes=5)
+        platform.idle_seconds = 23 * 60
+        assert service.poll_idle_gap() is None
+
+        # User input resumes at 14:31 -> triggers IdleGap once!
+        clock.advance(minutes=1)
+        platform.idle_seconds = 0.0
+        gap = service.poll_idle_gap()
+        assert gap is not None
+        assert gap.idle_started_at == datetime(2026, 11, 25, 14, 7, tzinfo=UTC)
+        assert gap.detected_at == datetime(2026, 11, 25, 14, 31, tzinfo=UTC)
+        assert gap.idle_seconds == 24 * 60
+        assert gap.affected_task_ids == (task.id,)
+
+        # Subsequent poll while active returns None
+        assert service.poll_idle_gap() is None
+
+        # Trim idle time back to 14:07 -> 7m logged
+        service.resolve_idle_gap(keep=False, idle_started_at=gap.idle_started_at)
+        trimmed = service.get_task(task.id)
+        assert trimmed is not None
+        assert trimmed.is_timer_running is False
+        assert trimmed.total_logged_seconds(clock.current) == 7 * 60
+
+        # IdleThreshold.OFF suppresses and resets pending state
+        service.toggle_timer(task.id)
+        clock.advance(minutes=20)
+        platform.idle_seconds = 20 * 60
+        assert service.poll_idle_gap() is None
+        service.update_settings(Settings(idle_threshold=IdleThreshold.OFF))
+        platform.idle_seconds = 0.0
+        assert service.poll_idle_gap() is None

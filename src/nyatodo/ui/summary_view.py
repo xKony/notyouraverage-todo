@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from nyatodo.domain import DailySummary, TaskDayBreakdown, TaskStatus
 from nyatodo.ui.icons import create_check_pixmap, create_chevron_icon
+from nyatodo.ui.qt_helpers import clear_layout
 from nyatodo.ui.theme import (
     DARK_TOKENS,
     ColorTokens,
@@ -109,7 +110,13 @@ class DailySummaryView(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
 
-        # 1. Day Selector Row
+        root.addLayout(self._build_day_selector())
+        root.addWidget(self._build_hero_panel())
+        self._build_breakdown_section(root)
+
+        self.apply_theme(DARK_TOKENS)
+
+    def _build_day_selector(self) -> QHBoxLayout:
         day_row = QHBoxLayout()
         day_row.setContentsMargins(0, 0, 0, 0)
         day_row.setSpacing(8)
@@ -139,10 +146,29 @@ class DailySummaryView(QWidget):
         self.next_day_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.next_day_button.clicked.connect(self.go_next_day)
         day_row.addWidget(self.next_day_button)
+        return day_row
 
-        root.addLayout(day_row)
+    def _make_metric_column(
+        self,
+        parent: QWidget,
+        title: str,
+        caption: str,
+    ) -> tuple[QVBoxLayout, QLabel]:
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        title_label = QLabel(title, parent)
+        title_label.setObjectName("HeroMetricTitle")
+        value_label = QLabel("00:00:00", parent)
+        value_label.setObjectName("HeroMetricValue")
+        value_label.setFont(make_mono_font(22, make_mono_font().weight()))
+        caption_label = QLabel(caption, parent)
+        caption_label.setObjectName("HeroMetricCaption")
+        col.addWidget(title_label)
+        col.addWidget(value_label)
+        col.addWidget(caption_label)
+        return col, value_label
 
-        # 2. Hero Metric Pair
+    def _build_hero_panel(self) -> QFrame:
         self.hero_frame = QFrame(self)
         self.hero_frame.setObjectName("SummaryHero")
         hero_outer = QVBoxLayout(self.hero_frame)
@@ -153,18 +179,9 @@ class DailySummaryView(QWidget):
         columns.setContentsMargins(0, 0, 0, 0)
         columns.setSpacing(16)
 
-        left_col = QVBoxLayout()
-        left_col.setSpacing(2)
-        wall_title = QLabel("Wall-Clock Active", self.hero_frame)
-        wall_title.setObjectName("HeroMetricTitle")
-        self.wall_clock_value = QLabel("00:00:00", self.hero_frame)
-        self.wall_clock_value.setObjectName("HeroMetricValue")
-        self.wall_clock_value.setFont(make_mono_font(22, make_mono_font().weight()))
-        wall_caption = QLabel("Time with >=1 timer running", self.hero_frame)
-        wall_caption.setObjectName("HeroMetricCaption")
-        left_col.addWidget(wall_title)
-        left_col.addWidget(self.wall_clock_value)
-        left_col.addWidget(wall_caption)
+        left_col, self.wall_clock_value = self._make_metric_column(
+            self.hero_frame, "Wall-Clock Active", "Time with >=1 timer running"
+        )
         columns.addLayout(left_col, 1)
 
         v_divider = QFrame(self.hero_frame)
@@ -172,18 +189,9 @@ class DailySummaryView(QWidget):
         v_divider.setFrameShape(QFrame.Shape.VLine)
         columns.addWidget(v_divider)
 
-        right_col = QVBoxLayout()
-        right_col.setSpacing(2)
-        logged_title = QLabel("Total Logged", self.hero_frame)
-        logged_title.setObjectName("HeroMetricTitle")
-        self.total_logged_value = QLabel("00:00:00", self.hero_frame)
-        self.total_logged_value.setObjectName("HeroMetricValue")
-        self.total_logged_value.setFont(make_mono_font(22, make_mono_font().weight()))
-        logged_caption = QLabel("Sum of Work Sessions", self.hero_frame)
-        logged_caption.setObjectName("HeroMetricCaption")
-        right_col.addWidget(logged_title)
-        right_col.addWidget(self.total_logged_value)
-        right_col.addWidget(logged_caption)
+        right_col, self.total_logged_value = self._make_metric_column(
+            self.hero_frame, "Total Logged", "Sum of Work Sessions"
+        )
         columns.addLayout(right_col, 1)
 
         hero_outer.addLayout(columns)
@@ -197,10 +205,9 @@ class DailySummaryView(QWidget):
         self.overlap_caption.setObjectName("OverlapCaption")
         self.overlap_caption.setWordWrap(True)
         hero_outer.addWidget(self.overlap_caption)
+        return self.hero_frame
 
-        root.addWidget(self.hero_frame)
-
-        # 3. Breakdown Section Header + Scroll List
+    def _build_breakdown_section(self, root: QVBoxLayout) -> None:
         breakdown_header = QHBoxLayout()
         breakdown_header.setContentsMargins(0, 4, 0, 0)
         section_title = QLabel("Tasks Worked & Completed", self)
@@ -224,8 +231,6 @@ class DailySummaryView(QWidget):
         self.list_layout.setSpacing(0)
         self.scroll_area.setWidget(self.list_container)
         root.addWidget(self.scroll_area, 1)
-
-        self.apply_theme(DARK_TOKENS)
 
     def apply_theme(self, tokens: ColorTokens) -> None:
         """Refresh icon colors and breakdown rows for the active theme."""
@@ -275,13 +280,7 @@ class DailySummaryView(QWidget):
         self._rebuild_rows(summary.tasks)
 
     def _rebuild_rows(self, items: tuple[TaskDayBreakdown, ...]) -> None:
-        while self.list_layout.count():
-            child = self.list_layout.takeAt(0)
-            if child is not None and child.widget() is not None:
-                widget = child.widget()
-                assert widget is not None
-                widget.setParent(None)
-                widget.deleteLater()
+        clear_layout(self.list_layout)
 
         if not items:
             empty = QLabel("No Work Sessions or completed Tasks for this day.", self.list_container)

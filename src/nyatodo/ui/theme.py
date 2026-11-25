@@ -1,14 +1,10 @@
 """Color tokens, typography helpers, and flat QSS stylesheet builder for nyatodo."""
 
-import sys
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QApplication
 
 from nyatodo.domain import ThemeMode
-from nyatodo.platform_win32 import PlatformBridge
 
 
 @dataclass(frozen=True)
@@ -96,50 +92,18 @@ LIGHT_TOKENS = ColorTokens(
 )
 
 
-def _detect_qt_system_theme() -> ThemeMode:
-    app = QApplication.instance()
-    if isinstance(app, QApplication):
-        scheme = app.styleHints().colorScheme()
-        if scheme == Qt.ColorScheme.Light:
-            return ThemeMode.LIGHT
-        if scheme == Qt.ColorScheme.Dark:
-            return ThemeMode.DARK
-        window_color = app.palette().window().color()
-        return ThemeMode.LIGHT if window_color.lightness() > 128 else ThemeMode.DARK
-    return ThemeMode.DARK
-
-
-def _detect_windows_registry_theme() -> ThemeMode | None:
-    if sys.platform != "win32":
-        return None
-    try:
-        import winreg
-
-        key_path = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
-            return ThemeMode.LIGHT if int(value) == 1 else ThemeMode.DARK
-    except OSError:
-        return None
-
-
-def resolve_theme_mode(mode: ThemeMode, platform: PlatformBridge | None = None) -> ThemeMode:
+def resolve_theme_mode(mode: ThemeMode, system_theme: ThemeMode = ThemeMode.DARK) -> ThemeMode:
     """Resolve ThemeMode.SYSTEM into concrete DARK or LIGHT."""
     if mode != ThemeMode.SYSTEM:
         return mode
-    if platform is not None:
-        resolved = platform.get_system_theme()
-        if resolved in (ThemeMode.DARK, ThemeMode.LIGHT):
-            return resolved
-    win_theme = _detect_windows_registry_theme()
-    if win_theme is not None:
-        return win_theme
-    return _detect_qt_system_theme()
+    if system_theme in (ThemeMode.DARK, ThemeMode.LIGHT):
+        return system_theme
+    return ThemeMode.DARK
 
 
-def resolve_theme(mode: ThemeMode, platform: PlatformBridge | None = None) -> ColorTokens:
+def resolve_theme(mode: ThemeMode, system_theme: ThemeMode = ThemeMode.DARK) -> ColorTokens:
     """Return ColorTokens for the given ThemeMode."""
-    resolved = resolve_theme_mode(mode, platform=platform)
+    resolved = resolve_theme_mode(mode, system_theme=system_theme)
     return LIGHT_TOKENS if resolved == ThemeMode.LIGHT else DARK_TOKENS
 
 

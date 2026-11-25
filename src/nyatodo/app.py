@@ -58,15 +58,15 @@ def build_application(
     bridge: PlatformBridge = platform if platform is not None else Win32PlatformBridge()
     service = TodoService(repo, platform=bridge)
 
-    window = MainWindow(service, platform=bridge, hotkey_id=DEFAULT_HOTKEY_ID)
+    window = MainWindow(service, hotkey_id=DEFAULT_HOTKEY_ID)
     tray = TrayController()
 
     def _sync_tray() -> None:
         running = service.get_running_tasks()
         settings = service.get_settings()
-        tokens = resolve_theme(settings.theme, platform=bridge)
-        now = window._clock()
-        total_running_seconds = sum(task.total_logged_seconds(now=now) for task in running)
+        tokens = resolve_theme(settings.theme, system_theme=service.get_system_theme())
+        now = window.current_time()
+        total_running_seconds = sum(task.active_session_seconds(now=now) for task in running)
         tray.update_state(
             running_count=len(running),
             running_seconds=total_running_seconds,
@@ -96,8 +96,7 @@ def build_application(
 
     def _on_about_to_quit() -> None:
         window.tick_timer.stop()
-        if window._thinking_widget is not None:
-            window._thinking_widget.flush_pending_saves()
+        window.flush_pending_saves()
         service.shutdown(hotkey_id=DEFAULT_HOTKEY_ID, hwnd=window.hotkey_hwnd())
         tray.hide()
         repo.close()
