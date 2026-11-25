@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QFont
 
 from nyatodo.domain import ThemeMode
 
@@ -15,6 +15,7 @@ class ColorTokens:
     bg_window: str
     bg_surface: str
     bg_elevated: str
+    bg_thinking: str
     bg_hover: str
     bg_selected: str
     border_subtle: str
@@ -31,64 +32,69 @@ class ColorTokens:
     tint_accent_border: str
     tint_waiting: str
     tint_waiting_border: str
+    tint_done: str
+    tint_done_border: str
     tint_danger: str
     scrim_modal: str
     modal_bg: str
-    shadow_rgba: tuple[int, int, int, int]
 
 
 DARK_TOKENS = ColorTokens(
     is_dark=True,
-    bg_window="#111317",
-    bg_surface="#171A20",
-    bg_elevated="#1E222A",
-    bg_hover="#1A1E26",
-    bg_selected="#222733",
-    border_subtle="#262B35",
-    border_focus="#5E8BFF",
-    text_primary="#ECEFF4",
-    text_secondary="#9CA5B4",
-    text_muted="#858FA1",
-    accent_primary="#5E8BFF",
-    status_doing="#5E8BFF",
-    status_waiting="#E5A93B",
-    status_done="#38C172",
-    danger="#F06464",
-    tint_accent="rgba(94, 139, 255, 0.14)",
-    tint_accent_border="rgba(94, 139, 255, 0.35)",
-    tint_waiting="rgba(229, 169, 59, 0.12)",
-    tint_waiting_border="rgba(229, 169, 59, 0.38)",
-    tint_danger="rgba(240, 100, 100, 0.12)",
-    scrim_modal="rgba(0, 0, 0, 0.55)",
-    modal_bg="#111317",
-    shadow_rgba=(0, 0, 0, 122),
+    bg_window="#16171B",
+    bg_surface="#1D1F25",
+    bg_elevated="#252831",
+    bg_thinking="#1D1F25",
+    bg_hover="#222631",
+    bg_selected="#2A3040",
+    border_subtle="#2D313B",
+    border_focus="#4C8DFF",
+    text_primary="#F4F4F5",
+    text_secondary="#A1A1AA",
+    text_muted="#8E8E98",
+    accent_primary="#4C8DFF",
+    status_doing="#4C8DFF",
+    status_waiting="#F59E0B",
+    status_done="#34D399",
+    danger="#F87171",
+    tint_accent="rgba(76, 141, 255, 0.14)",
+    tint_accent_border="rgba(76, 141, 255, 0.35)",
+    tint_waiting="rgba(245, 158, 11, 0.12)",
+    tint_waiting_border="rgba(245, 158, 11, 0.38)",
+    tint_done="rgba(52, 211, 153, 0.12)",
+    tint_done_border="rgba(52, 211, 153, 0.32)",
+    tint_danger="rgba(248, 113, 113, 0.12)",
+    scrim_modal="rgba(0, 0, 0, 0.56)",
+    modal_bg="#16171B",
 )
 
 LIGHT_TOKENS = ColorTokens(
     is_dark=False,
-    bg_window="#F8F9FB",
-    bg_surface="#F1F3F7",
+    bg_window="#FFFFFF",
+    bg_surface="#FAF8F4",
     bg_elevated="#FFFFFF",
-    bg_hover="#EEF1F6",
-    bg_selected="#E7ECF5",
-    border_subtle="#DCE1EA",
-    border_focus="#2054D6",
-    text_primary="#111827",
-    text_secondary="#4B5565",
-    text_muted="#5F6B7E",
-    accent_primary="#2054D6",
-    status_doing="#2054D6",
-    status_waiting="#9A5404",
-    status_done="#137338",
-    danger="#C62222",
-    tint_accent="rgba(32, 84, 214, 0.10)",
-    tint_accent_border="rgba(32, 84, 214, 0.28)",
-    tint_waiting="rgba(154, 84, 4, 0.09)",
-    tint_waiting_border="rgba(154, 84, 4, 0.30)",
-    tint_danger="rgba(198, 34, 34, 0.08)",
-    scrim_modal="rgba(15, 23, 42, 0.28)",
+    bg_thinking="#FEFCE8",
+    bg_hover="#F4F1EA",
+    bg_selected="#EFF4FF",
+    border_subtle="#E6E2D8",
+    border_focus="#0066FF",
+    text_primary="#18181B",
+    text_secondary="#52525B",
+    text_muted="#71717A",
+    accent_primary="#0066FF",
+    status_doing="#0066FF",
+    status_waiting="#D97706",
+    status_done="#15803D",
+    danger="#DC2626",
+    tint_accent="rgba(0, 102, 255, 0.10)",
+    tint_accent_border="rgba(0, 102, 255, 0.28)",
+    tint_waiting="rgba(217, 119, 6, 0.10)",
+    tint_waiting_border="rgba(217, 119, 6, 0.30)",
+    tint_done="rgba(21, 128, 61, 0.10)",
+    tint_done_border="rgba(21, 128, 61, 0.28)",
+    tint_danger="rgba(220, 38, 38, 0.08)",
+    scrim_modal="rgba(24, 24, 27, 0.28)",
     modal_bg="#FFFFFF",
-    shadow_rgba=(15, 23, 42, 36),
 )
 
 
@@ -111,23 +117,8 @@ def make_ui_font(
     pixel_size: int = 13,
     weight: QFont.Weight = QFont.Weight.Normal,
 ) -> QFont:
-    """Create a proportional UI QFont with Segoe UI Variable Text / Segoe UI fallback."""
-    font = QFont()
-    font.setFamilies(["Segoe UI Variable Text", "Segoe UI", "Arial"])
-    font.setPixelSize(pixel_size)
-    font.setWeight(weight)
-    return font
-
-
-def make_mono_font(
-    pixel_size: int = 12,
-    weight: QFont.Weight = QFont.Weight.Medium,
-) -> QFont:
-    """Create a tabular monospace QFont for timers, durations, counts, and keycaps."""
-    font = QFont()
-    font.setFamilies(["Cascadia Mono", "Consolas", "Courier New"])
-    font.setStyleHint(QFont.StyleHint.Monospace)
-    font.setFixedPitch(True)
+    """Create a unified Segoe UI QFont for all nyatodo text and numeric readouts."""
+    font = QFont("Segoe UI")
     font.setPixelSize(pixel_size)
     font.setWeight(weight)
     return font
@@ -150,18 +141,12 @@ def format_compact_duration(seconds: int) -> str:
     return format_hms(clamped)
 
 
-def shadow_qcolor(tokens: ColorTokens) -> QColor:
-    """Return QColor for neutral spotlight window elevation."""
-    r, g, b, a = tokens.shadow_rgba
-    return QColor(r, g, b, a)
-
-
 def build_stylesheet(tokens: ColorTokens) -> str:
-    """Build flat, hairline-bordered QSS stylesheet from ColorTokens."""
+    """Build flat, warm, hairline-bordered QSS stylesheet from ColorTokens."""
     t = tokens
     return f"""
     QWidget {{
-        font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+        font-family: "Segoe UI";
         color: {t.text_primary};
         outline: none;
     }}
@@ -182,6 +167,16 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         font-weight: 600;
     }}
 
+    #AddedFeedbackPill {{
+        background-color: {t.tint_done};
+        border: 1px solid {t.tint_done_border};
+        border-radius: 10px;
+        color: {t.status_done};
+        font-size: 11px;
+        font-weight: 600;
+        padding: 0px 8px;
+    }}
+
     #RunningTimerPill {{
         background-color: {t.tint_accent};
         border: 1px solid {t.tint_accent_border};
@@ -192,19 +187,19 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.accent_primary};
     }}
     #RunningTimerPillText {{
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 11px;
-        font-weight: 500;
+        font-weight: 600;
         color: {t.status_doing};
         background: transparent;
     }}
 
-    #SettingsButton {{
+    #SettingsButton, #ExpandToggleButton {{
         background-color: transparent;
         border: 1px solid transparent;
         border-radius: 6px;
     }}
-    #SettingsButton:hover {{
+    #SettingsButton:hover, #ExpandToggleButton:hover {{
         background-color: {t.bg_hover};
     }}
 
@@ -228,11 +223,11 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #RequesterPill {{
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
-        border-radius: 4px;
+        border-radius: 10px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
-        padding: 2px 6px;
+        padding: 1px 8px;
     }}
 
     #EnterHintKeycap {{
@@ -240,7 +235,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_subtle};
         border-radius: 4px;
         color: {t.text_muted};
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 10px;
         font-weight: 500;
         padding: 1px 6px;
@@ -260,7 +255,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #IdleKeepButton {{
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 12px;
         color: {t.text_primary};
         font-size: 11px;
         font-weight: 500;
@@ -272,7 +267,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #IdleTrimButton {{
         background-color: {t.tint_danger};
         border: 1px solid {t.danger};
-        border-radius: 6px;
+        border-radius: 12px;
         color: {t.danger};
         font-size: 11px;
         font-weight: 600;
@@ -282,12 +277,12 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #SegmentedTabs {{
         background-color: {t.bg_surface};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 8px;
     }}
     QPushButton#SegmentTabButton {{
         background-color: transparent;
         border: 1px solid transparent;
-        border-radius: 4px;
+        border-radius: 6px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
@@ -301,6 +296,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
         color: {t.text_primary};
+        font-weight: 600;
     }}
 
     #TaskListScroll, #SummaryScroll, #SessionListScroll {{
@@ -322,12 +318,12 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         margin: 2px 0px 2px 0px;
     }}
     QScrollBar::handle:vertical {{
-        background: {t.bg_elevated};
+        background: {t.border_subtle};
         border-radius: 3px;
         min-height: 24px;
     }}
     QScrollBar::handle:vertical:hover {{
-        background: {t.border_subtle};
+        background: {t.text_muted};
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
@@ -356,14 +352,15 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
 
     #TaskTimerLabel {{
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 12px;
-        font-weight: 500;
+        font-weight: 600;
         color: {t.status_doing};
         background: transparent;
     }}
     #TaskTimerLabel[paused="true"] {{
         font-size: 11px;
+        font-weight: 500;
         color: {t.text_muted};
     }}
 
@@ -378,15 +375,15 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
 
     #SubStepCountLabel {{
-        font-family: "Cascadia Mono", "Consolas", monospace;
-        font-size: 10px;
+        font-family: "Segoe UI";
+        font-size: 10.5px;
         font-weight: 500;
         color: {t.text_muted};
         background: transparent;
     }}
 
     #ThinkingSpace {{
-        background-color: {t.bg_surface};
+        background-color: {t.bg_thinking};
         border: 1px solid {t.border_subtle};
         border-radius: 8px;
     }}
@@ -405,11 +402,11 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #ThinkingRequesterEdit {{
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
-        border-radius: 4px;
+        border-radius: 10px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
-        padding: 2px 6px;
+        padding: 2px 8px;
     }}
     #ThinkingRequesterEdit:focus {{
         border: 1px solid {t.border_focus};
@@ -419,29 +416,31 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     QPushButton#StatusChipButton {{
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
-        border-radius: 4px;
+        border-radius: 12px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
-        padding: 2px 8px;
+        padding: 2px 10px;
     }}
     QPushButton#StatusChipButton:hover {{
         background-color: {t.bg_hover};
         color: {t.text_primary};
     }}
     QPushButton#StatusChipButton[active="true"] {{
+        background-color: {t.tint_accent};
         border: 1px solid {t.accent_primary};
-        color: {t.text_primary};
+        color: {t.accent_primary};
+        font-weight: 600;
     }}
 
     QPushButton#ThinkingTimerButton {{
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 13px;
         color: {t.text_primary};
         font-size: 11px;
         font-weight: 500;
-        padding: 0px 10px;
+        padding: 0px 12px;
     }}
     QPushButton#ThinkingTimerButton:hover {{
         background-color: {t.bg_hover};
@@ -450,7 +449,8 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         background-color: {t.tint_accent};
         border: 1px solid {t.tint_accent_border};
         color: {t.status_doing};
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
+        font-weight: 600;
     }}
 
     #SectionDivider {{
@@ -515,12 +515,12 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     QPushButton#SessionChip {{
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 11px;
         color: {t.text_secondary};
-        font-family: "Cascadia Mono", "Consolas", monospace;
-        font-size: 10px;
+        font-family: "Segoe UI";
+        font-size: 10.5px;
         font-weight: 500;
-        padding: 0px 8px;
+        padding: 0px 9px;
     }}
     QPushButton#SessionChip:hover {{
         background-color: {t.bg_hover};
@@ -532,19 +532,20 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_focus};
         border-radius: 6px;
         color: {t.text_primary};
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 11px;
         padding: 2px 8px;
     }}
 
     #SessionRowLabel {{
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 11px;
         color: {t.text_secondary};
         background: transparent;
     }}
     #SessionRowLabel[running="true"] {{
         color: {t.status_doing};
+        font-weight: 600;
     }}
 
     QToolButton#RowDeleteButton {{
@@ -591,7 +592,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         background: transparent;
     }}
     #HeroMetricValue {{
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 22px;
         font-weight: 600;
         color: {t.text_primary};
@@ -612,9 +613,9 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border-bottom: 1px solid {t.border_subtle};
     }}
     #SummaryDurationLabel {{
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 12px;
-        font-weight: 500;
+        font-weight: 600;
         color: {t.text_primary};
         background: transparent;
     }}
@@ -655,31 +656,38 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #SettingsSegmentTrack {{
         background-color: {t.bg_surface};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 8px;
     }}
     QPushButton#SettingsSegmentOption {{
         background-color: transparent;
         border: 1px solid transparent;
-        border-radius: 4px;
+        border-radius: 6px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
         padding: 0px 10px;
     }}
+    QPushButton#SettingsSegmentOption:hover {{
+        color: {t.text_primary};
+    }}
     QPushButton#SettingsSegmentOption[active="true"] {{
         background-color: {t.bg_elevated};
         border: 1px solid {t.border_subtle};
         color: {t.text_primary};
+        font-weight: 600;
     }}
     QPushButton#ShortcutCaptureButton {{
         background-color: {t.bg_surface};
         border: 1px solid {t.border_subtle};
         border-radius: 6px;
         color: {t.text_primary};
-        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-family: "Segoe UI";
         font-size: 11px;
-        font-weight: 500;
+        font-weight: 600;
         padding: 0px 10px;
+    }}
+    QPushButton#ShortcutCaptureButton:hover {{
+        background-color: {t.bg_hover};
     }}
     QPushButton#ShortcutCaptureButton[capturing="true"] {{
         border: 1px solid {t.border_focus};
@@ -695,28 +703,45 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.border_subtle};
         border-radius: 6px;
         color: {t.text_primary};
+        font-family: "Segoe UI";
         font-size: 12px;
-        padding: 2px 10px;
+        font-weight: 500;
+        padding: 2px 24px 2px 10px;
+    }}
+    QComboBox#IdleThresholdCombo:hover {{
+        background-color: {t.bg_hover};
+        border: 1px solid {t.border_focus};
     }}
     QComboBox#IdleThresholdCombo::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+        width: 20px;
         border: none;
-        width: 18px;
+        background: transparent;
+    }}
+    QComboBox#IdleThresholdCombo::down-arrow {{
+        image: none;
+        width: 0px;
+        height: 0px;
     }}
     QComboBox#IdleThresholdCombo QAbstractItemView {{
-        background-color: {t.bg_elevated};
+        background-color: {t.modal_bg};
         border: 1px solid {t.border_subtle};
+        border-radius: 6px;
         color: {t.text_primary};
         selection-background-color: {t.bg_selected};
         selection-color: {t.text_primary};
+        padding: 2px;
+        outline: none;
     }}
     QPushButton#SettingsDoneButton {{
         background-color: {t.accent_primary};
         border: none;
-        border-radius: 6px;
+        border-radius: 14px;
         color: #FFFFFF;
         font-size: 12px;
         font-weight: 600;
-        padding: 0px 14px;
+        padding: 0px 16px;
     }}
 
     #HintsFooter {{
@@ -727,17 +752,18 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
     #KeycapLabel {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
-        border-radius: 4px;
+        border: none;
+        border-radius: 3px;
         color: {t.text_secondary};
-        font-family: "Cascadia Mono", "Consolas", monospace;
-        font-size: 10px;
-        font-weight: 500;
-        padding: 1px 5px;
+        font-family: "Segoe UI";
+        font-size: 9.5px;
+        font-weight: 600;
+        padding: 0px 4px;
     }}
     #HintVerbLabel {{
         color: {t.text_muted};
-        font-size: 11px;
+        font-family: "Segoe UI";
+        font-size: 10px;
         background: transparent;
     }}
     """

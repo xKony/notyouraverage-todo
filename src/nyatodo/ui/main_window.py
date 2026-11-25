@@ -5,12 +5,20 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from functools import partial
+from typing import Literal
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QByteArray, QPoint, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QGuiApplication, QKeyEvent, QMouseEvent, QResizeEvent
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QGuiApplication,
+    QKeyEvent,
+    QMouseEvent,
+    QResizeEvent,
+)
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -31,6 +39,7 @@ from nyatodo.ui.hints_footer import HintContext, HintsFooter
 from nyatodo.ui.icons import (
     create_cat_monogram_pixmap,
     create_check_pixmap,
+    create_chevron_icon,
     create_gear_icon,
 )
 from nyatodo.ui.idle_banner import IdleBanner
@@ -44,10 +53,8 @@ from nyatodo.ui.theme import (
     ColorTokens,
     build_stylesheet,
     format_hms,
-    make_mono_font,
     make_ui_font,
     resolve_theme,
-    shadow_qcolor,
 )
 from nyatodo.ui.thinking_space import ThinkingSpaceWidget
 
@@ -135,6 +142,7 @@ class MainWindow(QWidget):
         *,
         clock: Callable[[], datetime] | None = None,
         hotkey_id: int = 1,
+        start_compact: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -149,12 +157,21 @@ class MainWindow(QWidget):
         self._summary_day: date = self._clock().astimezone().date()
         self._row_widgets: dict[str, TaskRowWidget] = {}
         self._thinking_widget: ThinkingSpaceWidget | None = None
+        self._empty_glyph_label: QLabel | None = None
         self._drag_offset: QPoint | None = None
         self._user_moved = False
         self._last_position: QPoint | None = None
+        self._is_compact: bool = start_compact
+        self._applying_mode = False
+        self._full_size = QSize(540, 640)
 
         self._configure_window()
         self._build_ui()
+
+        self._added_timer = QTimer(self)
+        self._added_timer.setSingleShot(True)
+        self._added_timer.setInterval(1500)
+        self._added_timer.timeout.connect(lambda: self.added_feedback_pill.setVisible(False))
 
         self.tick_timer = QTimer(self)
         self.tick_timer.setInterval(1000)
@@ -162,6 +179,7 @@ class MainWindow(QWidget):
         self.tick_timer.start()
 
         self.apply_settings(self._service.get_settings())
+        self._apply_compact_mode(self._is_compact)
         self.refresh_views()
         self.quick_bar.focus_input()
 
@@ -173,20 +191,16 @@ class MainWindow(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.resize(540, 660)
+        self.resize(540, 640)
         self.setMinimumSize(460, 520)
 
     def _build_ui(self) -> None:
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(12, 12, 12, 12)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
         self.shell = QFrame(self)
         self.shell.setObjectName("SpotlightShell")
-        self._shadow_effect = QGraphicsDropShadowEffect(self.shell)
-        self._shadow_effect.setBlurRadius(28.0)
-        self._shadow_effect.setOffset(0.0, 8.0)
-        self.shell.setGraphicsEffect(self._shadow_effect)
         outer_layout.addWidget(self.shell)
 
         shell_layout = QVBoxLayout(self.shell)
@@ -194,11 +208,11 @@ class MainWindow(QWidget):
         shell_layout.setSpacing(0)
 
         content_host = QWidget(self.shell)
-        content_layout = QVBoxLayout(content_host)
-        content_layout.setContentsMargins(16, 8, 16, 8)
-        content_layout.setSpacing(8)
+        self.content_layout = QVBoxLayout(content_host)
+        self.content_layout.setContentsMargins(16, 8, 16, 8)
+        self.content_layout.setSpacing(8)
 
-        content_layout.addWidget(self._build_header(content_host))
+        self.content_layout.addWidget(self._build_header(content_host))
 
         self.quick_bar = QuickBar(content_host)
         self.quick_bar.query_changed.connect(self._on_quick_query_changed)
@@ -206,16 +220,16 @@ class MainWindow(QWidget):
         self.quick_bar.jump_to_list_requested.connect(self._focus_task_list)
         self.quick_bar.escape_pressed.connect(self._handle_escape)
         self.quick_bar.focus_changed.connect(self._on_quick_bar_focus_changed)
-        content_layout.addWidget(self.quick_bar)
+        self.content_layout.addWidget(self.quick_bar)
 
         self.idle_banner = IdleBanner(content_host)
         self.idle_banner.keep_requested.connect(self._on_idle_keep)
         self.idle_banner.trim_requested.connect(self._on_idle_trim)
-        content_layout.addWidget(self.idle_banner)
+        self.content_layout.addWidget(self.idle_banner)
 
-        content_layout.addWidget(self._build_tabs(content_host))
-        content_layout.addWidget(self._build_body_stack(content_host), 1)
-        content_layout.addLayout(self._build_size_grip_row(content_host))
+        self.content_layout.addWidget(self._build_tabs(content_host))
+        self.content_layout.addWidget(self._build_body_stack(content_host), 1)
+        self.content_layout.addLayout(self._build_size_grip_row(content_host))
 
         shell_layout.addWidget(content_host, 1)
 
@@ -229,7 +243,7 @@ class MainWindow(QWidget):
     def _build_header(self, parent: QWidget) -> QFrame:
         self.header_bar = QFrame(parent)
         self.header_bar.setObjectName("HeaderBar")
-        self.header_bar.setFixedHeight(36)
+        self.header_bar.setFixedHeight(32)
         header_layout = QHBoxLayout(self.header_bar)
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(8)
@@ -240,10 +254,16 @@ class MainWindow(QWidget):
 
         self.brand_wordmark = QLabel("nyatodo", self.header_bar)
         self.brand_wordmark.setObjectName("BrandWordmark")
-        brand_font = make_ui_font(13)
-        brand_font.setWeight(brand_font.Weight.DemiBold)
-        self.brand_wordmark.setFont(brand_font)
+        self.brand_wordmark.setFont(make_ui_font(13, QFont.Weight.DemiBold))
         header_layout.addWidget(self.brand_wordmark)
+
+        self.added_feedback_pill = QLabel("Added", self.header_bar)
+        self.added_feedback_pill.setObjectName("AddedFeedbackPill")
+        self.added_feedback_pill.setFont(make_ui_font(11, QFont.Weight.DemiBold))
+        self.added_feedback_pill.setFixedHeight(20)
+        self.added_feedback_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.added_feedback_pill.setVisible(False)
+        header_layout.addWidget(self.added_feedback_pill)
 
         header_layout.addStretch(1)
 
@@ -257,10 +277,20 @@ class MainWindow(QWidget):
         pill_layout.addWidget(self.running_pill_dot)
         self.running_pill_text = QLabel("00:00:00", self.running_timer_pill)
         self.running_pill_text.setObjectName("RunningTimerPillText")
-        self.running_pill_text.setFont(make_mono_font(11))
+        self.running_pill_text.setFont(make_ui_font(11, QFont.Weight.DemiBold))
         pill_layout.addWidget(self.running_pill_text)
         self.running_timer_pill.clicked.connect(self._jump_to_running_task)
         header_layout.addWidget(self.running_timer_pill)
+
+        self.expand_button = QPushButton(self.header_bar)
+        self.expand_button.setObjectName("ExpandToggleButton")
+        self.expand_button.setFixedSize(28, 28)
+        self.expand_button.setIconSize(QSize(14, 14))
+        self.expand_button.setToolTip("Expand workspace")
+        self.expand_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.expand_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.expand_button.clicked.connect(self._toggle_compact_mode)
+        header_layout.addWidget(self.expand_button)
 
         self.settings_button = QPushButton(self.header_bar)
         self.settings_button.setObjectName("SettingsButton")
@@ -358,30 +388,64 @@ class MainWindow(QWidget):
         """Return ordered Task IDs currently visible in the Task List."""
         return list(self._row_widgets.keys())
 
+    def is_compact(self) -> bool:
+        """Return True when the window is in Compact Spotlight Mode."""
+        return self._is_compact
+
     def apply_settings(self, settings: Settings) -> None:
         """Apply theme, shortcut hints visibility, and refresh theme-dependent widgets."""
         tokens = resolve_theme(settings.theme, system_theme=self._service.get_system_theme())
         self._tokens = tokens
         self.setStyleSheet(build_stylesheet(tokens))
-        self._shadow_effect.setColor(shadow_qcolor(tokens))
 
         self.brand_icon_label.setPixmap(create_cat_monogram_pixmap(18, QColor(tokens.text_primary)))
         self.running_pill_dot.setStyleSheet(
             f"background-color: {tokens.status_doing}; border-radius: 3px;"
         )
+        self._refresh_expand_button_icon()
         self.settings_button.setIcon(create_gear_icon(QColor(tokens.text_secondary), 16))
 
         self.quick_bar.apply_theme(tokens)
         self.idle_banner.apply_theme(tokens)
         self.summary_view.apply_theme(tokens)
         self.settings_overlay.apply_theme(tokens)
+        for row in self._row_widgets.values():
+            row.apply_theme(tokens)
+        if self._thinking_widget is not None:
+            self._thinking_widget.apply_theme(tokens)
+        if self._empty_glyph_label is not None:
+            self._empty_glyph_label.setPixmap(create_check_pixmap(QColor(tokens.text_muted), 20))
+
         self.hints_footer.set_hints_enabled(settings.show_shortcut_hints)
+        if self._is_compact:
+            compact_h = self._compute_compact_height()
+            self.setMinimumSize(460, compact_h)
+            self.setMaximumHeight(compact_h)
+            self.resize(self.width(), compact_h)
         self._update_hints_context()
 
-    def show_and_focus(self) -> None:
-        """Position on active screen (or restore dragged position), show, and focus Quick Bar."""
+    def show_spotlight(self) -> None:
+        """Open in Compact Spotlight Mode centered in upper third (or last dragged pos)."""
+        self.added_feedback_pill.setVisible(False)
+        self._added_timer.stop()
+        self._apply_compact_mode(True)
         self.refresh_views()
-        self._position_for_show()
+        self._position_for_show(compact=True)
+        self._activate_and_focus_quick_bar()
+
+    def show_and_focus(self) -> None:
+        """Open Full Workspace Mode centered on active screen (or last dragged pos)."""
+        self.added_feedback_pill.setVisible(False)
+        self._added_timer.stop()
+        self._apply_compact_mode(False)
+        self.refresh_views()
+        self._position_for_show(compact=False)
+        self._activate_and_focus_quick_bar()
+
+    def _activate_and_focus_quick_bar(self) -> None:
+        self.setWindowState(
+            (self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive
+        )
         self.show()
         self.raise_()
         self.activateWindow()
@@ -391,19 +455,115 @@ class MainWindow(QWidget):
     def hide_to_tray(self) -> None:
         """Flush any open Thinking Space edits and hide window."""
         self.flush_pending_saves()
+        self._added_timer.stop()
+        self.added_feedback_pill.setVisible(False)
         if self._user_moved:
             self._last_position = self.pos()
         self.hide()
 
     def toggle_visibility(self) -> None:
-        """Toggle spotlight window visibility from tray or global hotkey."""
+        """Toggle Full Workspace window visibility from the system tray."""
         if self.isVisible():
             self.hide_to_tray()
         else:
             self.show_and_focus()
 
+    def toggle_spotlight(self) -> None:
+        """Toggle Compact Spotlight window visibility from the global hotkey."""
+        if self.isVisible():
+            self.hide_to_tray()
+        else:
+            self.show_spotlight()
+
+    def expand_workspace(self) -> None:
+        """Expand from Compact Spotlight Mode into Full Workspace Mode."""
+        if not self._is_compact:
+            return
+        self.added_feedback_pill.setVisible(False)
+        self._added_timer.stop()
+        self._apply_compact_mode(False, preserve_position=True)
+        self.refresh_views()
+        self._update_hints_context()
+
+    def collapse_to_spotlight(self) -> None:
+        """Collapse from Full Workspace Mode back into Compact Spotlight Mode."""
+        if self._is_compact:
+            return
+        if self.settings_overlay.isVisible():
+            self.settings_overlay.close_modal()
+        self.flush_pending_saves()
+        self._apply_compact_mode(True)
+        self.quick_bar.focus_input()
+        self._update_hints_context()
+
+    def _toggle_compact_mode(self) -> None:
+        if self._is_compact:
+            self.expand_workspace()
+        else:
+            self.collapse_to_spotlight()
+
+    def _compute_compact_height(self) -> int:
+        # top(6) + header(32) + spacing(6) + quick_bar(38) + bottom(6) + shell border(2) = 90
+        base_height = 90
+        hints_height = 20 if self.hints_footer.hints_enabled() else 0
+        return base_height + hints_height
+
+    def _refresh_expand_button_icon(self) -> None:
+        direction: Literal["up", "down"] = "down" if self._is_compact else "up"
+        self.expand_button.setIcon(
+            create_chevron_icon(direction, QColor(self._tokens.text_secondary), 14)
+        )
+        self.expand_button.setToolTip(
+            "Expand workspace" if self._is_compact else "Compact spotlight"
+        )
+
+    def _apply_compact_mode(self, compact: bool, *, preserve_position: bool = False) -> None:
+        self._applying_mode = True
+        try:
+            self._is_compact = compact
+            self.tabs_frame.setVisible(not compact)
+            self.stack.setVisible(not compact)
+            self.size_grip.setVisible(not compact)
+
+            if compact:
+                self.idle_banner.setVisible(False)
+                self.content_layout.setContentsMargins(16, 6, 16, 6)
+                self.content_layout.setSpacing(6)
+                compact_h = self._compute_compact_height()
+                self.setMinimumSize(460, compact_h)
+                self.setMaximumHeight(compact_h)
+                self.resize(self._full_size.width(), compact_h)
+            else:
+                self.content_layout.setContentsMargins(16, 8, 16, 8)
+                self.content_layout.setSpacing(8)
+                target_size = QSize(self._full_size)
+                self.setMinimumSize(460, 520)
+                self.setMaximumHeight(16777215)
+                self.resize(target_size)
+                if preserve_position:
+                    screen = (
+                        QGuiApplication.screenAt(self.pos())
+                        or QGuiApplication.screenAt(QCursor.pos())
+                        or QGuiApplication.primaryScreen()
+                    )
+                    if screen is not None:
+                        avail = screen.availableGeometry()
+                        clamped_x = max(avail.x(), min(self.x(), avail.right() - self.width() + 1))
+                        clamped_y = max(
+                            avail.y(), min(self.y(), avail.bottom() - self.height() + 1)
+                        )
+                        self.move(clamped_x, clamped_y)
+                        if self._user_moved:
+                            self._last_position = self.pos()
+        finally:
+            self._applying_mode = False
+
+        self._refresh_expand_button_icon()
+
     def switch_tab(self, tab: ViewTab) -> None:
         """Switch between Active, Waiting, and Daily Summary tabs."""
+        if self._is_compact:
+            self.expand_workspace()
         self.flush_pending_saves()
         self._current_tab = tab
         if tab == ViewTab.SUMMARY:
@@ -416,6 +576,10 @@ class MainWindow(QWidget):
 
     def open_settings(self) -> None:
         """Open the centered Settings modal overlay."""
+        if self._is_compact:
+            self.expand_workspace()
+        if (layout := self.layout()) is not None:
+            layout.activate()
         self.flush_pending_saves()
         self.settings_overlay.open_with_settings(self._service.get_settings())
 
@@ -425,6 +589,9 @@ class MainWindow(QWidget):
         if not self._service.get_running_tasks():
             if self.idle_banner.isVisible():
                 self.idle_banner.dismiss()
+            return
+
+        if self._is_compact:
             return
 
         if gap is not None:
@@ -542,17 +709,24 @@ class MainWindow(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
+        if not self._applying_mode and not self._is_compact and self.isVisible():
+            self._full_size = event.size()
         if self.settings_overlay.isVisible():
+            if (layout := self.layout()) is not None:
+                layout.activate()
             self.settings_overlay.setGeometry(self.shell.rect())
 
-    def _position_for_show(self) -> None:
+    def _position_for_show(self, *, compact: bool = False) -> None:
         if self._user_moved and self._last_position is not None:
             self.move(self._last_position)
             return
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         avail = screen.availableGeometry()
         target_x = avail.x() + (avail.width() - self.width()) // 2
-        target_y = avail.y() + (avail.height() - self.height()) // 2
+        if compact:
+            target_y = avail.y() + max(24, (avail.height() - self.height()) // 3)
+        else:
+            target_y = avail.y() + (avail.height() - self.height()) // 2
         self.move(target_x, target_y)
 
     def _compute_visible_tasks(
@@ -578,6 +752,7 @@ class MainWindow(QWidget):
 
         self._row_widgets.clear()
         self._thinking_widget = None
+        self._empty_glyph_label = None
         clear_layout(self.task_list_layout)
 
         valid_ids = {t.id for t in tasks}
@@ -637,6 +812,7 @@ class MainWindow(QWidget):
         glyph = QLabel(box)
         glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
         glyph.setPixmap(create_check_pixmap(QColor(self._tokens.text_muted), 20))
+        self._empty_glyph_label = glyph
         layout.addWidget(glyph)
 
         if self.quick_bar.text().strip():
@@ -692,6 +868,8 @@ class MainWindow(QWidget):
         running = self._service.get_running_tasks()
         if not running:
             return
+        if self._is_compact:
+            self.expand_workspace()
         target = running[0]
         self._current_tab = ViewTab.ACTIVE
         self._selected_task_id = target.id
@@ -700,6 +878,8 @@ class MainWindow(QWidget):
         self._focus_task_list()
 
     def _focus_task_list(self) -> None:
+        if self._is_compact:
+            self.expand_workspace()
         if self._current_tab == ViewTab.SUMMARY:
             self.switch_tab(ViewTab.ACTIVE)
         ids = self.displayed_task_ids()
@@ -780,7 +960,12 @@ class MainWindow(QWidget):
     def _on_quick_bar_focus_changed(self, _focused: bool) -> None:
         self._update_hints_context()
 
-    def _on_quick_query_changed(self, _raw: str) -> None:
+    def _on_quick_query_changed(self, raw: str) -> None:
+        if raw:
+            self.added_feedback_pill.setVisible(False)
+        if self._is_compact and is_search_input(raw):
+            self.expand_workspace()
+            return
         if self._current_tab == ViewTab.SUMMARY and is_search_input(self.quick_bar.text()):
             self.switch_tab(ViewTab.ACTIVE)
             return
@@ -793,6 +978,9 @@ class MainWindow(QWidget):
             self._current_tab = ViewTab.ACTIVE
             self._selected_task_id = created.id
             self.stack.setCurrentWidget(self.task_scroll)
+            if self._is_compact:
+                self.added_feedback_pill.setVisible(True)
+                self._added_timer.start()
         self.refresh_views()
         self.quick_bar.focus_input()
 
@@ -955,7 +1143,7 @@ class MainWindow(QWidget):
         saved = self._service.update_settings(
             settings,
             hotkey_id=self._hotkey_id,
-            hwnd=self.hotkey_hwnd(),
+            hwnd=0,
         )
         self.apply_settings(saved)
         self.settings_updated.emit(saved)
@@ -966,7 +1154,9 @@ class MainWindow(QWidget):
         self._update_hints_context()
 
     def _update_hints_context(self) -> None:
-        if self._current_tab == ViewTab.SUMMARY:
+        if self._is_compact:
+            self.hints_footer.set_context(HintContext.COMPACT_SPOTLIGHT)
+        elif self._current_tab == ViewTab.SUMMARY:
             self.hints_footer.set_context(HintContext.SUMMARY)
         elif self._expanded_task_id is not None and (
             self._thinking_widget is not None and self._thinking_widget.has_editor_focus()

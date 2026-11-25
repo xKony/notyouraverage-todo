@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QEnterEvent, QFontMetrics, QMouseEvent, QPainter
+from PySide6.QtGui import QColor, QEnterEvent, QFont, QFontMetrics, QMouseEvent, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,7 +22,6 @@ from nyatodo.ui.theme import (
     ColorTokens,
     format_compact_duration,
     format_hms,
-    make_mono_font,
     make_ui_font,
 )
 
@@ -96,7 +95,7 @@ class TaskRowWidget(QFrame):
 
         self.timer_label = QLabel(self)
         self.timer_label.setObjectName("TaskTimerLabel")
-        self.timer_label.setFont(make_mono_font(12, make_mono_font().weight()))
+        self.timer_label.setFont(make_ui_font(12, QFont.Weight.DemiBold))
         layout.addWidget(self.timer_label)
 
         self.title_label = _ElidedLabel(task.title, self)
@@ -109,15 +108,15 @@ class TaskRowWidget(QFrame):
 
         self.requester_pill = QLabel(self)
         self.requester_pill.setObjectName("RequesterPill")
-        self.requester_pill.setFont(make_ui_font(11))
+        self.requester_pill.setFont(make_ui_font(11, QFont.Weight.Medium))
         self.requester_pill.setFixedHeight(20)
         self.requester_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.requester_pill.setMaximumWidth(108)
+        self.requester_pill.setMaximumWidth(116)
         meta_layout.addWidget(self.requester_pill)
 
         self.sub_step_label = QLabel(self)
         self.sub_step_label.setObjectName("SubStepCountLabel")
-        self.sub_step_label.setFont(make_mono_font(10))
+        self.sub_step_label.setFont(make_ui_font(10, QFont.Weight.Medium))
         meta_layout.addWidget(self.sub_step_label)
 
         self.delete_button = QToolButton(self)
@@ -150,6 +149,13 @@ class TaskRowWidget(QFrame):
         set_qss_property(self, "selected", selected)
         self.update()
 
+    def apply_theme(self, tokens: ColorTokens) -> None:
+        """Refresh icon tints and selection accent bar for updated theme tokens."""
+        self._tokens = tokens
+        self.status_button.setIcon(create_status_icon(self._task.status, tokens, 16))
+        self.delete_button.setIcon(create_close_icon(QColor(tokens.text_muted), 10))
+        self.update()
+
     def update_task(self, task: Task, *, now: datetime, tokens: ColorTokens) -> None:
         """Refresh all Task fields and styling."""
         self._task = task
@@ -159,8 +165,7 @@ class TaskRowWidget(QFrame):
         self.delete_button.setIcon(create_close_icon(QColor(tokens.text_muted), 10))
 
         is_done = task.status == TaskStatus.DONE
-        title_font = make_ui_font(13, make_ui_font().weight())
-        title_font.setWeight(title_font.Weight.Medium)
+        title_font = make_ui_font(13, QFont.Weight.Medium)
         title_font.setStrikeOut(is_done)
         self.title_label.setFont(title_font)
         self.title_label.set_full_text(task.title)

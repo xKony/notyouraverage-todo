@@ -14,7 +14,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QEnterEvent, QKeyEvent, QPainter, QPen
+from PySide6.QtGui import QColor, QEnterEvent, QFont, QKeyEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QFrame,
@@ -38,7 +38,6 @@ from nyatodo.ui.theme import (
     DARK_TOKENS,
     ColorTokens,
     format_hms,
-    make_mono_font,
     make_ui_font,
 )
 
@@ -195,7 +194,7 @@ class _WorkSessionRowWidget(_HoverDeleteRow):
         self.line_label = QLabel(line_text, self)
         self.line_label.setObjectName("SessionRowLabel")
         self.line_label.setProperty("running", session.is_running)
-        self.line_label.setFont(make_mono_font(11))
+        self.line_label.setFont(make_ui_font(11))
         row_layout.addWidget(self.line_label, 1)
 
         self.delete_button = QToolButton(self)
@@ -255,18 +254,17 @@ class ThinkingSpaceWidget(QFrame):
         self._height_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._height_anim.finished.connect(self._on_height_anim_finished)
 
-        root = QVBoxLayout(self)
-        root.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-        root.setContentsMargins(12, 10, 12, 10)
-        root.setSpacing(8)
+        self._root_layout = QVBoxLayout(self)
+        self._root_layout.setContentsMargins(12, 10, 12, 10)
+        self._root_layout.setSpacing(8)
 
-        self._build_header_section(root)
-        root.addWidget(self._make_divider())
-        self._build_notes_section(root)
-        root.addWidget(self._make_divider())
-        self._build_sub_steps_section(root)
-        root.addWidget(self._make_divider())
-        self._build_sessions_section(root)
+        self._build_header_section(self._root_layout)
+        self._root_layout.addWidget(self._make_divider())
+        self._build_notes_section(self._root_layout)
+        self._root_layout.addWidget(self._make_divider())
+        self._build_sub_steps_section(self._root_layout)
+        self._root_layout.addWidget(self._make_divider())
+        self._build_sessions_section(self._root_layout)
         self._install_editor_filters()
 
         self.update_task(task, now=now, tokens=tokens)
@@ -275,9 +273,7 @@ class ThinkingSpaceWidget(QFrame):
         self.title_edit = QLineEdit(self)
         self.title_edit.setObjectName("ThinkingTitleEdit")
         self.title_edit.setFixedHeight(26)
-        title_font = make_ui_font(13, make_ui_font().weight())
-        title_font.setWeight(title_font.Weight.DemiBold)
-        self.title_edit.setFont(title_font)
+        self.title_edit.setFont(make_ui_font(13, QFont.Weight.DemiBold))
         self.title_edit.setPlaceholderText("Task title")
         self.title_edit.editingFinished.connect(self._commit_title)
         root.addWidget(self.title_edit)
@@ -375,7 +371,7 @@ class ThinkingSpaceWidget(QFrame):
 
         self.sessions_header_label = QLabel("Work Sessions · 00:00:00", self)
         self.sessions_header_label.setObjectName("SectionLabel")
-        self.sessions_header_label.setFont(make_mono_font(11))
+        self.sessions_header_label.setFont(make_ui_font(11, QFont.Weight.DemiBold))
         sessions_header.addWidget(self.sessions_header_label)
         sessions_header.addStretch(1)
 
@@ -481,6 +477,7 @@ class ThinkingSpaceWidget(QFrame):
         self._height_anim.stop()
         self._collapsing = False
         self._collapse_callback = None
+        self.setMinimumHeight(0)
         self.setMaximumHeight(16777215)
         target_height = max(120, self.sizeHint().height())
         self.setMaximumHeight(0)
@@ -495,6 +492,7 @@ class ThinkingSpaceWidget(QFrame):
         self._height_anim.stop()
         self._collapsing = True
         self._collapse_callback = on_finished
+        self.setMinimumHeight(0)
         start_height = max(self.height(), self.sizeHint().height())
         self._height_anim.setStartValue(start_height)
         self._height_anim.setEndValue(0)
@@ -506,6 +504,15 @@ class ThinkingSpaceWidget(QFrame):
         self._flush_notes()
         self._commit_title()
         self._commit_requester()
+
+    def apply_theme(self, tokens: ColorTokens) -> None:
+        """Refresh custom-painted checkboxes and button icons for updated theme tokens."""
+        self._tokens = tokens
+        for checkbox in self.findChildren(_SubStepCheckBox):
+            checkbox.apply_theme(tokens)
+        for del_btn in self.findChildren(QToolButton, "RowDeleteButton"):
+            del_btn.setIcon(create_close_icon(QColor(tokens.text_muted), 10))
+        self.refresh_timer(now=self._now)
 
     def update_task(self, task: Task, *, now: datetime, tokens: ColorTokens) -> None:
         """Synchronize all Thinking Space widgets to the latest Task snapshot."""

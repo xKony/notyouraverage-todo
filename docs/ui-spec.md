@@ -8,21 +8,21 @@
 
 ## 1. Anti-Slop Design Contract
 
-`nyatodo` adopts a calm Swiss / Linear / Things-inspired desktop utility aesthetic. Every visual element must earn its pixels:
+`nyatodo` adopts a calm, warm Buttondown-inspired desktop utility aesthetic. Every visual element must earn its pixels:
 
 1. **Zero gradients:** Flat solid surfaces and hairline `1px` borders only. No gradient headers, buttons, or pills.
-2. **Zero neon / purple-blue glow:** No colored `box-shadow` halos. Window elevation uses a single neutral drop shadow only.
+2. **Zero neon / glow / QGraphicsEffect:** No colored `box-shadow` halos and zero `QGraphicsDropShadowEffect` / `QGraphicsOpacityEffect` layers (a crisp `1px` border on `#SpotlightShell` avoids Windows `WA_TranslucentBackground` child paint-coordinate corruption).
 3. **Zero dashboard card clutter:** No multi-card grids, sparklines, progress rings, or decorative containers. Collapsed **Task** rows share a clean unified **Task List**.
 4. **Zero anime/mascot clutter or emoji in chrome:** Brand presence is limited to a single restrained `18 × 18` geometric cat-ear/whisker monogram (`1.5px` vector stroke) in the header and tray icon. No emoji anywhere in UI chrome.
-5. **One grey family:** Cool slate-graphite neutrals across both **Dark** and **Light** themes. Never mix warm/sepia greys with cool greys.
-6. **One accent hue, locked:** Muted Cobalt (`#5E8BFF` Dark / `#2054D6` Light) is the sole interactive accent across every surface. Semantic status colors are reserved strictly for **Task Status** (`Doing`, `Waiting`, `Done`) and destructive/trim actions (`danger`).
+5. **Warm Buttondown-inspired neutrals:** Crisp paper & warm cream in **Light** mode (`#FFFFFF` / `#FAF8F4` / `#FEFCE8` soft butter-cream **Thinking Space**), and warm cozy charcoal in **Dark** mode (`#16171B` / `#1D1F25` / `#252831`).
+6. **One accent hue, locked:** Friendly Cobalt (`#4C8DFF` Dark / `#0066FF` Light) is the sole interactive accent across every surface. Semantic status colors are reserved strictly for **Task Status** (`Doing`, `Waiting`, `Done`) and destructive/trim actions (`danger`).
 7. **Shape lock (Corner-Radius Scale):**
    - `12px`: Floating spotlight window outer shell
    - `10px`: Centered overlay modal (**Settings**)
-   - `8px`: **Quick Bar**, expanded **Thinking Space** inset, **Idle Check** banner, **Daily Summary** hero container
-   - `6px`: **Task** row hover/selection highlight, segmented tab track, action buttons, **Work Session** quick-adjust chips
-   - `4px`: `@Requester` pill, shortcut keycaps, active segmented tab item
-   - `999px`: Header running **Task Timer** pill, status dots
+   - `8px`: **Quick Bar**, expanded **Thinking Space** inset, **Idle Check** banner, **Daily Summary** hero container, segmented tab track
+   - `6px`: **Task** row hover/selection highlight, active segmented tab item
+   - `3px`: Ultra-compact shortcut micro-tag keycaps
+   - `999px` (half-height pill radius): Header running **Task Timer** pill, `"Added"` pill, `@Requester` pills, **Task Status** pills, **Thinking Space** timer button, **Work Session** quick-adjust chips, **Settings** Done button, status dots
 8. **Spacing grid:** Strict `4px` base unit (`4px`, `8px`, `12px`, `16px`, `20px`).
 
 ---
@@ -31,14 +31,14 @@
 
 | Property | Specification |
 |---|---|
-| **Default Size** | `540 × 660` logical px |
-| **Minimum Size** | `460 × 520` logical px (resizable via bottom-right grip & window edges) |
-| **Window Flags** | `Qt.FramelessWindowHint \| Qt.Window` with `Qt.WA_TranslucentBackground` outer margin (`12px`) for shadow + rounded `12px` inner frame |
-| **Outer Border** | `1px solid border_subtle` |
-| **Window Elevation Shadow** | Dark: `0 16px 40px rgba(0, 0, 0, 0.48)` · Light: `0 12px 32px rgba(15, 23, 42, 0.14)` |
-| **Drag Handle** | Entire `44px` custom Header bar (excluding interactive timer pill and Settings button) |
-| **Outer Content Padding** | `16px` horizontal, `12px` vertical |
-| **Scrollbars** | Custom `6px`-wide slim trackless scrollbar, `bg_elevated` thumb (`3px` radius), appears on hover/scroll |
+| **Full Workspace Size** | `540 × 640` logical px |
+| **Compact Spotlight Mode** | `540 × ~110` logical px (`90px` when hints disabled), opened by global hotkey and positioned centered in the upper third of the active screen (or last dragged position). Auto-expands to Full Workspace on `Down` / `Tab`, `/`, running timer pill click, expand button click, or opening Settings. |
+| **Minimum Size** | `460 × 520` logical px in Full Workspace mode (resizable via bottom-right grip) |
+| **Window Flags** | `Qt.FramelessWindowHint \| Qt.Window \| Qt.WindowStaysOnTopHint` with `Qt.WA_TranslucentBackground` (`0px` outer margin, `12px` rounded `#SpotlightShell`) |
+| **Outer Border** | `1px solid border_subtle` (zero `QGraphicsEffect`) |
+| **Drag Handle** | Entire `32px` custom Header bar (excluding interactive pills/buttons) |
+| **Outer Content Padding** | `16px` horizontal, `8px` vertical (`6px` vertical in Compact Spotlight Mode) |
+| **Scrollbars** | Custom `6px`-wide slim trackless scrollbar, `border_subtle` thumb (`3px` radius) |
 
 ### System Tray (`QSystemTrayIcon`)
 - **Icon:** `16 × 16` / `32 × 32` crisp vector SVG of the geometric cat-ear/whisker monogram (`1.5px` stroke, adapts foreground to Windows light/dark taskbar).
@@ -52,21 +52,21 @@
 
 ---
 
-## 3. Typography & Tabular Numerals
+## 3. Typography (Unified `Segoe UI`)
+
+Every widget and QSS rule uses **`Segoe UI`** exclusively (Windows default, zero font mixing).
 
 | Role | Font Family | Size | Weight | Line Height | Notes |
 |---|---|---|---|---|---|
-| **Brand Wordmark** | `Segoe UI Variable Text`, `Segoe UI` | `13px` | `600` | `18px` | Tight `-0.01em` tracking |
-| **Section / Day Title** | `Segoe UI Variable Text`, `Segoe UI` | `13px` | `600` | `18px` | Clean hierarchy |
-| **Hero Metric Value** | `Cascadia Mono`, `Consolas` | `22px` | `600` | `28px` | Tabular digits (`04:42:10`) |
-| **Task Title** | `Segoe UI Variable Text`, `Segoe UI` | `13px` | `500` (collapsed) / `600` (expanded) | `18px` | `Qt.ElideRight` when collapsed |
-| **Body / Notes / Inputs** | `Segoe UI Variable Text`, `Segoe UI` | `13px` | `400` | `19px` | Readable `Notes` measure |
-| **Sub-step Label** | `Segoe UI Variable Text`, `Segoe UI` | `12.5px` | `400` | `17px` | Crisp alignment with `14px` check |
-| **Live Timer / Duration** | `Cascadia Mono`, `Consolas` | `12px` | `500` | `16px` | Fixed-pitch / tabular digits |
-| **Metadata / Pills / Tabs** | `Segoe UI Variable Text`, `Segoe UI` | `11.5px` | `500` | `15px` | Tab labels, `@Requester`, captions |
-| **Keycaps & Counts** | `Cascadia Mono`, `Consolas` | `10.5px` | `500` | `14px` | Keycaps (`Enter`, `t`), `2/4` counts |
-
-> **PySide6 Note:** Set `QFont.setStyleHint(QFont.Monospace)` and `QFont.setFixedPitch(True)` on all timer, count, and keycap `QFont` instances so `Cascadia Mono` / `Consolas` digits never jitter horizontally as seconds tick.
+| **Brand Wordmark** | `Segoe UI` | `13px` | `600` | `18px` | Crisp brand anchor |
+| **Section / Day Title** | `Segoe UI` | `13px` | `600` | `18px` | Clean hierarchy |
+| **Hero Metric Value** | `Segoe UI` | `22px` | `600` | `28px` | Summary totals (`04:42:10`) |
+| **Task Title** | `Segoe UI` | `13px` | `500` (collapsed) / `600` (expanded) | `18px` | `Qt.ElideRight` when collapsed |
+| **Body / Notes / Inputs** | `Segoe UI` | `13px` | `400` | `19px` | Readable `Notes` measure |
+| **Sub-step Label** | `Segoe UI` | `12px` | `400` | `17px` | Crisp alignment with `14px` check |
+| **Live Timer / Duration** | `Segoe UI` | `12px` | `600` | `16px` | Active timer & summary durations |
+| **Metadata / Pills / Tabs** | `Segoe UI` | `11px` | `500` | `15px` | Tab labels, `@Requester`, captions |
+| **Keycaps & Hints** | `Segoe UI` | `9.5px–10px` | `500–600` | `14px` | Compact `20px` footer hints |
 
 ---
 
@@ -78,32 +78,35 @@ All foreground tokens are verified to achieve `>= 4.5:1` WCAG AA contrast agains
 
 | Token | Dark Theme | Light Theme | Usage |
 |---|---|---|---|
-| `bg_window` | `#111317` | `#F8F9FB` | Main spotlight window canvas & modal surface |
-| `bg_surface` | `#171A20` | `#F1F3F7` | **Quick Bar**, segmented tab track, expanded **Thinking Space**, hero summary panel, footer |
-| `bg_elevated` | `#1E222A` | `#FFFFFF` | Active tab item, `@Requester` pill, keycap fill, quick-adjust chips, buttons |
-| `bg_hover` | `#1A1E26` | `#EEF1F6` | Hovered **Task** row, hovered icon button |
-| `bg_selected` | `#222733` | `#E7ECF5` | Keyboard-selected **Task** row |
-| `border_subtle` | `#262B35` | `#DCE1EA` | `1px` outer frame, hairlines, input borders, keycap borders, dividers |
-| `border_focus` | `#5E8BFF` | `#2054D6` | Active focus border (`1.5px`) on **Quick Bar**, inputs, checkboxes |
-| `text_primary` | `#ECEFF4` | `#111827` | Primary **Task** titles, hero numbers, active timer text, notes |
-| `text_secondary` | `#9CA5B4` | `#4B5565` | `@Requester` pill text, inactive tab labels, **Work Session** timestamps, captions |
-| `text_muted` | `#858FA1` | `#5F6B7E` | Placeholders, footer hints, `Sub-step` counts, `Done` strikethrough text |
-| `accent_primary` | `#5E8BFF` | `#2054D6` | Primary focus ring, active selection left bar, active timer pill dot, summary bars |
-| `status_doing` | `#5E8BFF` | `#2054D6` | `Doing` status indicator & live running **Task Timer** readout |
-| `status_waiting` | `#E5A93B` | `#9A5404` | `Waiting` status icon/badge & **Idle Check** banner cue |
-| `status_done` | `#38C172` | `#137338` | `Done` checkmark icon & completed indicator |
-| `danger` | `#F06464` | `#C62222` | `Trim` action in **Idle Check** banner, delete **Task** / **Work Session** hover action |
+| `bg_window` | `#16171B` | `#FFFFFF` | Main spotlight window canvas & modal surface |
+| `bg_surface` | `#1D1F25` | `#FAF8F4` | **Quick Bar**, segmented tab track, hero summary panel, footer |
+| `bg_elevated` | `#252831` | `#FFFFFF` | Active tab item, `@Requester` pill, micro-tag keycaps, chips, buttons |
+| `bg_thinking` | `#1D1F25` | `#FEFCE8` | Expanded **Thinking Space** soft butter-cream cozy surface |
+| `bg_hover` | `#222631` | `#F4F1EA` | Hovered **Task** row, hovered icon button |
+| `bg_selected` | `#2A3040` | `#EFF4FF` | Keyboard-selected **Task** row |
+| `border_subtle` | `#2D313B` | `#E6E2D8` | `1px` outer frame, hairlines, input borders, dividers |
+| `border_focus` | `#4C8DFF` | `#0066FF` | Active focus border (`1px`) on **Quick Bar**, inputs |
+| `text_primary` | `#F4F4F5` | `#18181B` | Primary **Task** titles, hero numbers, active timer text, notes |
+| `text_secondary` | `#A1A1AA` | `#52525B` | `@Requester` pill text, inactive tab labels, **Work Session** timestamps, captions |
+| `text_muted` | `#8E8E98` | `#71717A` | Placeholders, footer hints, `Sub-step` counts, `Done` strikethrough text |
+| `accent_primary` | `#4C8DFF` | `#0066FF` | Primary focus ring, active selection left bar, active timer pill dot, summary bars |
+| `status_doing` | `#4C8DFF` | `#0066FF` | `Doing` status indicator & live running **Task Timer** readout |
+| `status_waiting` | `#F59E0B` | `#D97706` | `Waiting` status icon/badge & **Idle Check** banner cue |
+| `status_done` | `#34D399` | `#15803D` | `Done` checkmark icon, `"Added"` pill & completed indicator |
+| `danger` | `#F87171` | `#DC2626` | `Trim` action in **Idle Check** banner, delete **Task** / **Work Session** hover action |
 
 ### Derived Semantic Tints (Zero Extra Hues)
 
 | Derived Token | Dark Theme | Light Theme | Usage |
 |---|---|---|---|
-| `tint_accent` | `rgba(94, 139, 255, 0.14)` | `rgba(32, 84, 214, 0.10)` | Header running timer pill fill, active timer button fill |
-| `tint_accent_border` | `rgba(94, 139, 255, 0.35)` | `rgba(32, 84, 214, 0.28)` | Header running timer pill `1px` border |
-| `tint_waiting` | `rgba(229, 169, 59, 0.12)` | `rgba(154, 84, 4, 0.09)` | **Idle Check** banner background / `Waiting` status badge |
-| `tint_waiting_border` | `rgba(229, 169, 59, 0.38)` | `rgba(154, 84, 4, 0.30)` | **Idle Check** banner `1px` border |
-| `tint_danger` | `rgba(240, 100, 100, 0.12)` | `rgba(198, 34, 34, 0.08)` | `Trim` button hover / destructive confirmation fill |
-| `scrim_modal` | `rgba(0, 0, 0, 0.55)` | `rgba(15, 23, 42, 0.28)` | Backdrop scrim behind **Settings** modal |
+| `tint_accent` | `rgba(76, 141, 255, 0.14)` | `rgba(0, 102, 255, 0.10)` | Header running timer pill fill, active timer/status pill fill |
+| `tint_accent_border` | `rgba(76, 141, 255, 0.35)` | `rgba(0, 102, 255, 0.28)` | Running timer pill `1px` border |
+| `tint_waiting` | `rgba(245, 158, 11, 0.12)` | `rgba(217, 119, 6, 0.10)` | **Idle Check** banner background / `Waiting` status badge |
+| `tint_waiting_border` | `rgba(245, 158, 11, 0.38)` | `rgba(217, 119, 6, 0.30)` | **Idle Check** banner `1px` border |
+| `tint_done` | `rgba(52, 211, 153, 0.12)` | `rgba(21, 128, 61, 0.10)` | Compact `"Added"` feedback pill fill |
+| `tint_done_border` | `rgba(52, 211, 153, 0.32)` | `rgba(21, 128, 61, 0.28)` | Compact `"Added"` feedback pill `1px` border |
+| `tint_danger` | `rgba(248, 113, 113, 0.12)` | `rgba(220, 38, 38, 0.08)` | `Trim` button hover / destructive confirmation fill |
+| `scrim_modal` | `rgba(0, 0, 0, 0.56)` | `rgba(24, 24, 27, 0.28)` | Backdrop scrim behind **Settings** modal |
 
 ---
 
@@ -255,10 +258,11 @@ Displayed when Tab `3 Summary` is active (replaces the **Task List** below the s
      3. **Show Shortcut Hints:** Toggle switch (`34 × 18`, `999px` pill; `accent_primary` when On, `bg_surface` + `border_subtle` when Off).
      4. **Idle Check Threshold:** Compact dropdown/stepper (`Off`, `5m`, `10m`, `15m`, `30m`).
    - Footer: Right-aligned `Done` button (`28px` height, `6px` radius, `accent_primary` fill with `#FFFFFF` `500` text).
-3. **Toggleable Shortcut Hints Footer (`28px` height):**
+3. **Toggleable Shortcut Hints Footer (`20px` height):**
    - Collapses completely (`0px` height, `visible = False`) when `Show Shortcut Hints` is Off.
-   - Styling: `bg_surface` (or `bg_window` with `1px solid border_subtle` top hairline), `0 16px` padding, horizontal flow with `10px` item gaps.
-   - Each hint pairs a keycap (`Cascadia Mono` `10px`, `bg_elevated`, `1px solid border_subtle`, `4px` radius, `1px 5px` padding, `text_secondary`) + `11px` `text_muted` verb:
+   - Styling: `bg_surface` with `1px solid border_subtle` top hairline, `0 12px` padding, horizontal flow with `8px` item gaps.
+   - Each hint pairs an ultra-compact micro-tag (`Segoe UI` `9.5px`, `bg_elevated`, `3px` radius, `0px 4px` padding, `text_secondary`, no heavy border) + `10px` `text_muted` verb:
+     - **Compact Spotlight:** `Enter` Add · `/` Search · `↓` Expand · `Esc` Hide
      - **Quick Bar focused:** `Enter` Add · `/` Search · `↓` List · `Esc` Hide
      - **Task List focused (Active / Waiting):** `↓↑` Move · `t` Timer · `Enter` Expand · `w` Waiting · `d` Done · `Esc` Hide
      - **Thinking Space editing:** `Esc` Collapse · `Ctrl+Enter` Done

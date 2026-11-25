@@ -10,12 +10,13 @@ from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QPushButton
 from pytestqt.qtbot import QtBot
 
 from nyatodo.app import build_application
-from nyatodo.domain import IdleThreshold, Settings, TaskStatus, ThemeMode
+from nyatodo.domain import IdleThreshold, TaskStatus, ThemeMode
 from nyatodo.service import TodoService
 from nyatodo.storage import SQLiteRepository
+from nyatodo.ui.hints_footer import HintContext
 from nyatodo.ui.main_window import MainWindow, ViewTab
 from nyatodo.ui.task_row import TaskRowWidget
-from nyatodo.ui.theme import LIGHT_TOKENS
+from nyatodo.ui.theme import DARK_TOKENS, LIGHT_TOKENS
 from nyatodo.ui.thinking_space import ThinkingSpaceWidget
 
 
@@ -428,11 +429,20 @@ def test_settings_modal_theme_hints_and_hotkey_update(qtbot: QtBot, tmp_path: Pa
     window, service, _clock, platform, repo = make_window(qtbot, tmp_path)
     try:
         assert window.hints_footer.isVisible()
-        assert window.hints_footer.height() == 28
+        assert window.hints_footer.height() == 20
+        assert window.shell.graphicsEffect() is None
+        assert window.settings_overlay.graphicsEffect() is None
+
+        task = service.add_task_from_input("Theme refresh task @Maya")
+        assert task is not None
+        window.refresh_views()
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_Return)
 
         # Open Settings via Ctrl+,
         QTest.keyClick(window, Qt.Key.Key_Comma, Qt.KeyboardModifier.ControlModifier)
         assert window.settings_overlay.isVisible()
+        assert window.settings_overlay.geometry() == window.shell.rect()
 
         # Toggle Show Shortcut Hints Off -> footer collapses completely
         window.settings_overlay.hints_switch.click()
@@ -440,7 +450,7 @@ def test_settings_modal_theme_hints_and_hotkey_update(qtbot: QtBot, tmp_path: Pa
         assert window.hints_footer.height() == 0
         assert not service.get_settings().show_shortcut_hints
 
-        # Switch theme to Light via public objectName lookup
+        # Switch theme to Light via public objectName lookup and verify active widgets refresh
         light_btn = next(
             btn
             for btn in window.settings_overlay.findChildren(QPushButton, "SettingsSegmentOption")
@@ -449,9 +459,11 @@ def test_settings_modal_theme_hints_and_hotkey_update(qtbot: QtBot, tmp_path: Pa
         light_btn.click()
         assert service.get_settings().theme == ThemeMode.LIGHT
         assert LIGHT_TOKENS.bg_window in window.styleSheet()
+        assert find_task_row(window, task.id)._tokens == LIGHT_TOKENS
+        assert find_thinking_space(window)._tokens == LIGHT_TOKENS
 
         # System theme follows PlatformBridge.get_system_theme()
-        platform.system_theme = ThemeMode.LIGHT
+        platform.system_theme = ThemeMode.DARK
         system_btn = next(
             btn
             for btn in window.settings_overlay.findChildren(QPushButton, "SettingsSegmentOption")
@@ -459,9 +471,10 @@ def test_settings_modal_theme_hints_and_hotkey_update(qtbot: QtBot, tmp_path: Pa
         )
         system_btn.click()
         assert service.get_settings().theme == ThemeMode.SYSTEM
-        assert LIGHT_TOKENS.bg_window in window.styleSheet()
+        assert DARK_TOKENS.bg_window in window.styleSheet()
+        assert find_task_row(window, task.id)._tokens == DARK_TOKENS
 
-        # Capture new Global Shortcut Ctrl+Shift+K
+        # Capture new Global Shortcut Ctrl+Shift+K (passes hwnd=0)
         window.settings_overlay.shortcut_button.click()
         assert window.settings_overlay.is_capturing_shortcut()
         QTest.keyClick(
@@ -471,7 +484,7 @@ def test_settings_modal_theme_hints_and_hotkey_update(qtbot: QtBot, tmp_path: Pa
         )
         assert not window.settings_overlay.is_capturing_shortcut()
         assert service.get_settings().global_shortcut == "Ctrl+Shift+K"
-        assert platform.registered[-1][0] == "Ctrl+Shift+K"
+        assert platform.registered[-1] == ("Ctrl+Shift+K", 1, 0)
 
         # Change Idle Check Threshold to 30m
         idx_30 = window.settings_overlay.idle_combo.findData(IdleThreshold.THIRTY_MIN)
@@ -653,7 +666,7 @@ def test_app_build_application_registers_hotkey_syncs_tray_and_shuts_down(
     runtime = build_application(db_path=tmp_path / "app.db", platform=platform)
     qtbot.addWidget(runtime.window)
     try:
-        assert platform.registered == [("Ctrl+Alt+Space", 1, runtime.window.hotkey_hwnd())]
+        assert platform.registered == [("Ctrl+Alt+Space", 1, 0)]
         task = runtime.service.add_task_from_input("Tray test task")
         assert task is not None
         runtime.service.toggle_timer(task.id)
@@ -662,12 +675,109 @@ def test_app_build_application_registers_hotkey_syncs_tray_and_shuts_down(
         assert runtime.tray.status_action.isVisible()
         assert "Running: 1 Task" in runtime.tray.status_action.text()
 
-        # Clean shutdown closes running timer and unregisters hotkey
-        runtime.service.update_settings(Settings(theme=ThemeMode.LIGHT))
-        runtime.service.shutdown(hotkey_id=1, hwnd=runtime.window.hotkey_hwnd())
-        assert platform.unregistered == [(1, runtime.window.hotkey_hwnd())]
+        # Changing shortcut via UI updates tray menu shortcut and re-registers with hwnd=0
+        runtime.window.open_settings()
+        runtime.window.settings_overlay.shortcut_button.click()
+        QTest.keyClick(
+            runtime.window.settings_overlay,
+            Qt.Key.Key_K,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+        assert platform.registered[-1] == ("Ctrl+Shift+K", 1, 0)
+        assert "Ctrl+Shift+K" in runtime.tray.show_hide_action.text()
+
+        # Clean shutdown closes running timer and unregisters thread hotkey (hwnd=0)
+        runtime.service.shutdown(hotkey_id=1, hwnd=0)
+        assert platform.unregistered[-1] == (1, 0)
         stopped = runtime.service.get_task(task.id)
         assert stopped is not None and not stopped.is_timer_running
     finally:
         runtime.window.tick_timer.stop()
         runtime.repository.close()
+
+
+def test_compact_spotlight_mode_capture_and_auto_expand(qtbot: QtBot, tmp_path: Path) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path, show=False)
+    try:
+        # 1. Global hotkey toggle_spotlight() opens Compact Spotlight Mode
+        window.toggle_spotlight()
+        QApplication.processEvents()
+        assert window.isVisible()
+        assert window.is_compact()
+        assert 96 <= window.height() <= 112
+        assert window.width() == 540
+        assert not window.tabs_frame.isVisible()
+        assert not window.stack.isVisible()
+        assert not window.size_grip.isVisible()
+        assert window.hints_footer.context() == HintContext.COMPACT_SPOTLIGHT
+
+        # Repeated toggle_spotlight() hides and re-opens reliably in Compact Mode
+        window.toggle_spotlight()
+        assert not window.isVisible()
+        window.toggle_spotlight()
+        QApplication.processEvents()
+        assert window.isVisible()
+        assert window.is_compact()
+        assert not (window.windowState() & Qt.WindowState.WindowMinimized)
+        assert window.focusWidget() is window.quick_bar.input_edit
+
+        # 2. Submitting a Task in Compact Mode creates Task, shows "Added" pill, stays compact
+        QTest.keyClicks(window.quick_bar.input_edit, "Quick capture @Maya")
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Return)
+        assert window.is_compact()
+        assert window.quick_bar.text() == ""
+        assert window.added_feedback_pill.isVisible()
+        tasks = service.list_active_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].title == "Quick capture"
+
+        # 3. Pressing Down in Quick Bar auto-expands to Full Workspace Mode (540 x 640)
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        QApplication.processEvents()
+        assert not window.is_compact()
+        assert window.size().width() == 540
+        assert window.size().height() == 640
+        assert window.tabs_frame.isVisible()
+        assert window.stack.isVisible()
+        assert window.focusWidget() is window.task_scroll
+
+        # 4. Collapse back to Compact Mode via expand_button, then auto-expand on '/'
+        window.expand_button.click()
+        QApplication.processEvents()
+        assert window.is_compact()
+        QTest.keyClicks(window.quick_bar.input_edit, "/")
+        QApplication.processEvents()
+        assert not window.is_compact()
+        assert window.quick_bar.is_search_mode()
+
+        # 5. Collapse and verify Settings opens in Full Workspace Mode with aligned overlay
+        window.quick_bar.clear()
+        window.collapse_to_spotlight()
+        assert window.is_compact()
+        window.open_settings()
+        QApplication.processEvents()
+        assert not window.is_compact()
+        assert window.settings_overlay.isVisible()
+        assert window.settings_overlay.geometry() == window.shell.rect()
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_start_compact_constructor_and_tray_full_workspace(qtbot: QtBot, tmp_path: Path) -> None:
+    clock = FakeClock(datetime(2026, 11, 25, 14, 0, tzinfo=UTC))
+    platform = FakePlatform()
+    repo = SQLiteRepository(tmp_path / "compact.db")
+    service = TodoService(repo, clock=clock, platform=platform, local_tz=UTC)
+    window = MainWindow(service, clock=clock, start_compact=True)
+    qtbot.addWidget(window)
+    try:
+        assert window.is_compact()
+        window.toggle_visibility()
+        QApplication.processEvents()
+        assert window.isVisible()
+        assert not window.is_compact()
+        assert window.height() == 640
+    finally:
+        window.tick_timer.stop()
+        repo.close()

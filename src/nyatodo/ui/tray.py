@@ -91,7 +91,7 @@ class TrayController(QObject):
         icon_state = (has_active, tokens.is_dark)
         if icon_state != self._last_active_state:
             self._last_active_state = icon_state
-            fg = QColor("#ECEFF4") if tokens.is_dark else QColor("#111827")
+            fg = QColor(tokens.text_primary)
             badge = QColor(tokens.accent_primary)
             self.tray_icon.setIcon(
                 create_cat_tray_icon(foreground=fg, active_timer=has_active, badge_color=badge)

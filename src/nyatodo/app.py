@@ -79,25 +79,26 @@ def build_application(
         window.open_settings()
 
     window.state_changed.connect(_sync_tray)
+    window.settings_updated.connect(lambda _settings: _sync_tray())
     tray.toggle_window_requested.connect(window.toggle_visibility)
     tray.open_settings_requested.connect(_open_settings_from_tray)
     tray.quit_requested.connect(app.quit)
 
     hotkey_filter = HotkeyEventFilter(
         hotkey_id=DEFAULT_HOTKEY_ID,
-        on_triggered=window.toggle_visibility,
+        on_triggered=window.toggle_spotlight,
     )
     app.installNativeEventFilter(hotkey_filter)
     bridge.register_hotkey(
         service.get_settings().global_shortcut,
         hotkey_id=DEFAULT_HOTKEY_ID,
-        hwnd=window.hotkey_hwnd(),
+        hwnd=0,
     )
 
     def _on_about_to_quit() -> None:
         window.tick_timer.stop()
         window.flush_pending_saves()
-        service.shutdown(hotkey_id=DEFAULT_HOTKEY_ID, hwnd=window.hotkey_hwnd())
+        service.shutdown(hotkey_id=DEFAULT_HOTKEY_ID, hwnd=0)
         tray.hide()
         repo.close()
 

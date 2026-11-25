@@ -1,13 +1,13 @@
 """Quick Bar capture & '/' search widget with live @Requester pill preview."""
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFocusEvent, QKeyEvent
+from PySide6.QtGui import QColor, QFocusEvent, QFont, QKeyEvent
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QWidget
 
 from nyatodo.parser import is_search_input, parse_quick_input
 from nyatodo.ui.icons import create_plus_pixmap, create_search_pixmap
 from nyatodo.ui.qt_helpers import set_qss_property
-from nyatodo.ui.theme import DARK_TOKENS, ColorTokens, make_mono_font, make_ui_font
+from nyatodo.ui.theme import DARK_TOKENS, ColorTokens, make_ui_font
 
 
 class _QuickLineEdit(QLineEdit):
@@ -69,19 +69,23 @@ class QuickBar(QFrame):
 
         self.input_edit = _QuickLineEdit(self)
         self.input_edit.setObjectName("QuickBarInput")
-        self.input_edit.setFont(make_ui_font(13, make_ui_font().weight()))
+        self.input_edit.setFont(make_ui_font(13))
         self.input_edit.setPlaceholderText("Add task... (@who)  or  / to search")
         layout.addWidget(self.input_edit, 1)
 
         self.requester_pill = QLabel(self)
         self.requester_pill.setObjectName("RequesterPill")
-        self.requester_pill.setFont(make_ui_font(11))
+        self.requester_pill.setFont(make_ui_font(11, QFont.Weight.Medium))
+        self.requester_pill.setFixedHeight(20)
+        self.requester_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.requester_pill.setVisible(False)
         layout.addWidget(self.requester_pill)
 
         self.enter_hint = QLabel("Enter", self)
         self.enter_hint.setObjectName("EnterHintKeycap")
-        self.enter_hint.setFont(make_mono_font(10))
+        self.enter_hint.setFont(make_ui_font(10, QFont.Weight.Medium))
+        self.enter_hint.setFixedHeight(20)
+        self.enter_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.enter_hint.setVisible(False)
         layout.addWidget(self.enter_hint)
 

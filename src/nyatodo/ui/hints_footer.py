@@ -1,16 +1,18 @@
-"""Contextual 28px shortcut hints footer bar."""
+"""Contextual 20px whisper-quiet shortcut hints footer bar."""
 
 from enum import StrEnum
 
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
 from nyatodo.ui.qt_helpers import clear_layout
-from nyatodo.ui.theme import make_mono_font, make_ui_font
+from nyatodo.ui.theme import make_ui_font
 
 
 class HintContext(StrEnum):
     """Focused surface context determining which shortcut hints appear."""
 
+    COMPACT_SPOTLIGHT = "compact_spotlight"
     QUICK_BAR = "quick_bar"
     TASK_LIST = "task_list"
     THINKING_SPACE = "thinking_space"
@@ -18,6 +20,12 @@ class HintContext(StrEnum):
 
 
 _HINTS_BY_CONTEXT: dict[HintContext, tuple[tuple[str, str], ...]] = {
+    HintContext.COMPACT_SPOTLIGHT: (
+        ("Enter", "Add"),
+        ("/", "Search"),
+        ("↓", "Expand"),
+        ("Esc", "Hide"),
+    ),
     HintContext.QUICK_BAR: (
         ("Enter", "Add"),
         ("/", "Search"),
@@ -45,19 +53,19 @@ _HINTS_BY_CONTEXT: dict[HintContext, tuple[tuple[str, str], ...]] = {
 
 
 class HintsFooter(QFrame):
-    """28px contextual keycap hints bar that collapses completely when disabled."""
+    """20px contextual micro-tag hints bar that collapses completely when disabled."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("HintsFooter")
-        self.setFixedHeight(28)
+        self.setFixedHeight(20)
 
         self._hints_enabled = True
         self._context = HintContext.QUICK_BAR
 
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(16, 0, 16, 0)
-        self._layout.setSpacing(10)
+        self._layout.setContentsMargins(12, 0, 12, 0)
+        self._layout.setSpacing(8)
 
         self._rebuild()
 
@@ -65,7 +73,7 @@ class HintsFooter(QFrame):
         """Show or completely collapse the footer based on Settings.show_shortcut_hints."""
         self._hints_enabled = enabled
         self.setVisible(enabled)
-        self.setFixedHeight(28 if enabled else 0)
+        self.setFixedHeight(20 if enabled else 0)
 
     def hints_enabled(self) -> bool:
         """Return True if shortcut hints are enabled."""
@@ -85,14 +93,14 @@ class HintsFooter(QFrame):
     def _rebuild(self) -> None:
         clear_layout(self._layout)
 
-        key_font = make_mono_font(10)
-        verb_font = make_ui_font(11)
+        key_font = make_ui_font(10, QFont.Weight.DemiBold)
+        verb_font = make_ui_font(10)
 
         for keycap_text, verb_text in _HINTS_BY_CONTEXT[self._context]:
             pair = QWidget(self)
             pair_layout = QHBoxLayout(pair)
             pair_layout.setContentsMargins(0, 0, 0, 0)
-            pair_layout.setSpacing(4)
+            pair_layout.setSpacing(3)
 
             keycap = QLabel(keycap_text, pair)
             keycap.setObjectName("KeycapLabel")

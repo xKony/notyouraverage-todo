@@ -2,13 +2,12 @@
 
 from dataclasses import replace
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter, QPen
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
     QFrame,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -20,7 +19,7 @@ from nyatodo.domain import IdleThreshold, Settings, ThemeMode
 from nyatodo.platform_win32 import parse_hotkey
 from nyatodo.ui.icons import create_close_icon
 from nyatodo.ui.qt_helpers import set_qss_property
-from nyatodo.ui.theme import DARK_TOKENS, ColorTokens, make_mono_font, make_ui_font
+from nyatodo.ui.theme import DARK_TOKENS, ColorTokens, make_ui_font
 
 _IDLE_OPTIONS: tuple[tuple[str, IdleThreshold], ...] = (
     ("Off", IdleThreshold.OFF),
@@ -148,6 +147,33 @@ class ToggleSwitch(QAbstractButton):
         painter.end()
 
 
+class _ThemedComboBox(QComboBox):
+    """QComboBox with custom-painted crisp chevron matching active theme tokens."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._tokens: ColorTokens = DARK_TOKENS
+
+    def apply_theme(self, tokens: ColorTokens) -> None:
+        """Update chevron stroke color for active theme."""
+        self._tokens = tokens
+        self.update()
+
+    def paintEvent(self, event: object) -> None:
+        super().paintEvent(event)  # type: ignore[arg-type]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(self._tokens.text_secondary), 1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        cx = float(self.width()) - 13.0
+        cy = float(self.height()) / 2.0
+        painter.drawLine(QPointF(cx - 3.5, cy - 1.5), QPointF(cx, cy + 2.0))
+        painter.drawLine(QPointF(cx, cy + 2.0), QPointF(cx + 3.5, cy - 1.5))
+        painter.end()
+
+
 class SettingsOverlay(QWidget):
     """Centered Settings modal over a semi-transparent scrim inside the spotlight shell."""
 
@@ -164,13 +190,6 @@ class SettingsOverlay(QWidget):
         self._settings = Settings()
         self._loading = False
         self._capturing_shortcut = False
-
-        self._opacity_effect = QGraphicsOpacityEffect(self)
-        self._opacity_effect.setOpacity(1.0)
-        self.setGraphicsEffect(self._opacity_effect)
-        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
-        self._fade_anim.setDuration(100)
-        self._fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -223,9 +242,7 @@ class SettingsOverlay(QWidget):
         header_row.setContentsMargins(0, 0, 0, 12)
         title_label = QLabel("Settings", card)
         title_label.setObjectName("SettingsTitle")
-        header_font = make_ui_font(14)
-        header_font.setWeight(header_font.Weight.DemiBold)
-        title_label.setFont(header_font)
+        title_label.setFont(make_ui_font(14, QFont.Weight.DemiBold))
         header_row.addWidget(title_label)
         header_row.addStretch(1)
 
@@ -262,14 +279,15 @@ class SettingsOverlay(QWidget):
         btn.setObjectName("ShortcutCaptureButton")
         btn.setFixedHeight(26)
         btn.setMinimumWidth(138)
-        btn.setFont(make_mono_font(11))
+        btn.setFont(make_ui_font(11, QFont.Weight.DemiBold))
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(self._begin_shortcut_capture)
         return btn
 
-    def _build_idle_control(self, card: QFrame) -> QComboBox:
-        combo = QComboBox(card)
+    def _build_idle_control(self, card: QFrame) -> _ThemedComboBox:
+        combo = _ThemedComboBox(card)
         combo.setObjectName("IdleThresholdCombo")
+        combo.setFont(make_ui_font(12, QFont.Weight.Medium))
         combo.setFixedHeight(28)
         combo.setMinimumWidth(92)
         for label, threshold in _IDLE_OPTIONS:
@@ -294,10 +312,11 @@ class SettingsOverlay(QWidget):
         return self._capturing_shortcut
 
     def apply_theme(self, tokens: ColorTokens) -> None:
-        """Refresh icon & switch colors for the active theme."""
+        """Refresh icon, combo chevron, and switch colors for the active theme."""
         self._tokens = tokens
         self.close_button.setIcon(create_close_icon(QColor(tokens.text_secondary), 12))
         self.hints_switch.apply_theme(tokens)
+        self.idle_combo.apply_theme(tokens)
 
     def open_with_settings(self, settings: Settings) -> None:
         """Populate modal controls from Settings and display the overlay."""
@@ -319,19 +338,12 @@ class SettingsOverlay(QWidget):
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
-        self._fade_anim.stop()
-        self._opacity_effect.setOpacity(0.0)
         self.setVisible(True)
         self.raise_()
         self.done_button.setFocus(Qt.FocusReason.PopupFocusReason)
-        self._fade_anim.setStartValue(0.0)
-        self._fade_anim.setEndValue(1.0)
-        self._fade_anim.start()
 
     def close_modal(self) -> None:
         """Cancel any active capture and hide the Settings modal."""
-        self._fade_anim.stop()
-        self._opacity_effect.setOpacity(1.0)
         self._capturing_shortcut = False
         self._update_shortcut_button()
         self.shortcut_error_label.setVisible(False)

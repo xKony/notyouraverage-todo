@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -21,7 +21,6 @@ from nyatodo.ui.theme import (
     DARK_TOKENS,
     ColorTokens,
     format_hms,
-    make_mono_font,
     make_ui_font,
 )
 
@@ -133,9 +132,7 @@ class DailySummaryView(QWidget):
         self.day_title_label = QLabel("Today", self)
         self.day_title_label.setObjectName("DayTitleLabel")
         self.day_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_font = make_ui_font(13, make_ui_font().weight())
-        title_font.setWeight(title_font.Weight.DemiBold)
-        self.day_title_label.setFont(title_font)
+        self.day_title_label.setFont(make_ui_font(13, QFont.Weight.DemiBold))
         day_row.addWidget(self.day_title_label, 1)
 
         self.next_day_button = QPushButton(self)
@@ -160,7 +157,7 @@ class DailySummaryView(QWidget):
         title_label.setObjectName("HeroMetricTitle")
         value_label = QLabel("00:00:00", parent)
         value_label.setObjectName("HeroMetricValue")
-        value_label.setFont(make_mono_font(22, make_mono_font().weight()))
+        value_label.setFont(make_ui_font(22, QFont.Weight.DemiBold))
         caption_label = QLabel(caption, parent)
         caption_label.setObjectName("HeroMetricCaption")
         col.addWidget(title_label)
@@ -216,7 +213,7 @@ class DailySummaryView(QWidget):
         breakdown_header.addStretch(1)
         self.task_count_label = QLabel("0 tasks", self)
         self.task_count_label.setObjectName("SubStepCountLabel")
-        self.task_count_label.setFont(make_mono_font(11))
+        self.task_count_label.setFont(make_ui_font(11, QFont.Weight.Medium))
         breakdown_header.addWidget(self.task_count_label)
         root.addLayout(breakdown_header)
 
@@ -312,8 +309,7 @@ class DailySummaryView(QWidget):
 
             title_label = QLabel(row)
             title_label.setObjectName("TaskTitleLabel")
-            title_font = make_ui_font(12)
-            title_font.setWeight(title_font.Weight.Medium)
+            title_font = make_ui_font(12, QFont.Weight.Medium)
             title_label.setFont(title_font)
             metrics = QFontMetrics(title_font)
             title_label.setText(metrics.elidedText(item.title, Qt.TextElideMode.ElideRight, 220))
@@ -322,7 +318,7 @@ class DailySummaryView(QWidget):
             if item.requester:
                 pill = QLabel(f"@{item.requester}", row)
                 pill.setObjectName("RequesterPill")
-                pill.setFont(make_ui_font(11))
+                pill.setFont(make_ui_font(11, QFont.Weight.Medium))
                 pill.setFixedHeight(20)
                 pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 row_layout.addWidget(pill)
@@ -337,7 +333,7 @@ class DailySummaryView(QWidget):
             dur_text = format_hms(item.logged_seconds) if item.logged_seconds > 0 else "Done"
             dur_label = QLabel(dur_text, row)
             dur_label.setObjectName("SummaryDurationLabel")
-            dur_label.setFont(make_mono_font(12))
+            dur_label.setFont(make_ui_font(12, QFont.Weight.DemiBold))
             dur_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             dur_label.setMinimumWidth(68)
             row_layout.addWidget(dur_label)
