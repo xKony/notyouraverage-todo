@@ -9,10 +9,13 @@ A personal, keyboard-first desktop workspace for low-friction **Task** capture, 
 - **SQLite** for local persistence (`%LOCALAPPDATA%\nyatodo\nyatodo.db` by default)
 - **Win32 `ctypes`** (`RegisterHotKey`, `GetLastInputInfo`) for global shortcut activation and idle detection
 
-## Setup
+## Setup & Run
 
 ```powershell
 uv sync
+uv run nyatodo
+# Or without .exe script wrappers:
+uv run python -m nyatodo
 ```
 
 ## Development Checks

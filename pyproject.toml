@@ -1,12 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "nyatodo"
 version = "0.1.0"
 description = "Personal, keyboard-first task and time-tracking desktop workspace."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.15"
 dependencies = [
     "PySide6>=6.7,<6.11",
 ]
+
+[project.scripts]
+nyatodo = "nyatodo.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nyatodo"]
 
 [dependency-groups]
 dev = [
