@@ -7,6 +7,7 @@ from dataclasses import dataclass
 _REQUESTER_PATTERN = re.compile(
     r"(?:^|(?<=\s))@([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)[,;:.!?]?(?=$|\s)"
 )
+_ACTIVE_REQUESTER_BODY_RE = re.compile(r"([A-Za-z0-9_.-]*)(?=[,;:.!?]?(?:$|\s))")
 _TIME_RANGE_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
 _COLON_DURATION_RE = re.compile(r"^\s*(\d+):(\d{1,2})\s*$")
 _DURATION_PART_RE = re.compile(
@@ -30,6 +31,15 @@ class ManualSessionSpec:
     duration_seconds: int | None = None
     started_at: dt.datetime | None = None
     ended_at: dt.datetime | None = None
+
+
+@dataclass(frozen=True)
+class ActiveRequesterToken:
+    """Active @requester token around the cursor for Quick Bar autocompletion."""
+
+    query: str
+    start: int
+    end: int
 
 
 class QuickBarParser:
@@ -61,6 +71,60 @@ class QuickBarParser:
             return ""
         return " ".join(stripped[1:].split())
 
+    @staticmethod
+    def find_active_requester_token(raw: str, cursor_pos: int) -> ActiveRequesterToken | None:
+        """Return the first @requester token if cursor_pos lies within it, else None."""
+        stripped = raw.lstrip()
+        slash_idx = len(raw) - len(stripped) if stripped.startswith("/") else None
+
+        for idx, ch in enumerate(raw):
+            if ch != "@":
+                continue
+            is_boundary = (
+                idx == 0
+                or raw[idx - 1].isspace()
+                or (slash_idx is not None and idx == slash_idx + 1)
+            )
+            if not is_boundary:
+                continue
+            match = _ACTIVE_REQUESTER_BODY_RE.match(raw, idx + 1)
+            if match is None:
+                continue
+            token = ActiveRequesterToken(
+                query=match.group(1),
+                start=idx,
+                end=match.end(),
+            )
+            if token.start + 1 <= cursor_pos <= token.end:
+                return token
+            return None
+
+        return None
+
+    @staticmethod
+    def apply_requester_completion(
+        raw: str,
+        token: ActiveRequesterToken,
+        requester: str,
+        *,
+        append_space: bool = True,
+    ) -> tuple[str, int]:
+        """Replace token in raw with @requester and return (updated_text, new_cursor_pos)."""
+        clean_requester = requester.strip().lstrip("@")
+        replacement = f"@{clean_requester}"
+        prefix = raw[: token.start]
+        suffix = raw[token.end :]
+        if not append_space:
+            updated = f"{prefix}{replacement}{suffix}"
+            return updated, token.start + len(replacement)
+
+        if suffix and suffix[0].isspace():
+            updated = f"{prefix}{replacement}{suffix}"
+            return updated, token.start + len(replacement) + 1
+
+        updated = f"{prefix}{replacement} {suffix}"
+        return updated, token.start + len(replacement) + 1
+
 
 def parse_quick_input(raw: str) -> ParsedQuickInput:
     """Parse raw Quick Bar input into a task title and optional requester."""
@@ -75,6 +139,27 @@ def is_search_input(raw: str) -> bool:
 def extract_search_query(raw: str) -> str:
     """Return the normalized search query after a leading '/', or empty string."""
     return QuickBarParser.extract_search_query(raw)
+
+
+def find_active_requester_token(raw: str, cursor_pos: int) -> ActiveRequesterToken | None:
+    """Return the first @requester token if cursor_pos lies within it, else None."""
+    return QuickBarParser.find_active_requester_token(raw, cursor_pos)
+
+
+def apply_requester_completion(
+    raw: str,
+    token: ActiveRequesterToken,
+    requester: str,
+    *,
+    append_space: bool = True,
+) -> tuple[str, int]:
+    """Replace token in raw with @requester and return (updated_text, new_cursor_pos)."""
+    return QuickBarParser.apply_requester_completion(
+        raw,
+        token,
+        requester,
+        append_space=append_space,
+    )
 
 
 def parse_manual_session_input(

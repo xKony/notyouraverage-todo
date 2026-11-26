@@ -20,7 +20,7 @@
    - `12px`: Floating spotlight window outer shell
    - `10px`: Centered overlay modals (**Settings**, **Activity Summary** period picker)
    - `8px`: **Quick Bar**, expanded **Thinking Space** inset, **Idle Check** banner, **Activity Summary** hero container, segmented tab track, **Filter & Sort** popover
-   - `6px`: **Task** row hover/selection highlight, active segmented tab item
+   - `6px`: **Task** row hover/selection highlight, active segmented tab item, **Requester** autocompletion floating popup
    - `3px`: Ultra-compact shortcut micro-tag keycaps
    - `999px` (half-height pill radius): Header running **Task Timer** pill, `"Added"` pill, `@Requester` pills, **Task Status** pills, **Thinking Space** timer button, **Work Session** quick-adjust chips, **Settings** Done button, status dots
 8. **Spacing grid:** Strict `4px` base unit (`4px`, `8px`, `12px`, `16px`, `20px`).
@@ -158,6 +158,10 @@ All foreground tokens are verified to achieve `>= 4.5:1` WCAG AA contrast agains
    - **Right inline indicators (`8px` right margin, `6px` gap):**
      - Live `@Requester` pill preview: appears automatically as user types `@name` (e.g., `@Maya` in `bg_elevated`, `1px solid border_subtle`, `4px` radius, `11px` `text_secondary`, `2px 6px` padding).
      - Subtle `Enter` keycap hint (`bg_elevated`, `10.5px` `text_muted`) shown only when text is non-empty in Add mode.
+   - **Requester Autocompletion Floating Popup:**
+     - When the cursor is inside or at the end of the **first** `@token` (in Add or `/` search mode), displays a non-focus-stealing top-level themed popup (`bg_elevated` / `bg_surface`, `1px solid border_subtle`, `6px` radius, up to ~6 suggestion rows with `bg_selected` active highlight) anchored near the active `@` caret below the Quick Bar.
+     - Because it uses a top-level non-focus-stealing window, suggestions remain unclipped in both Compact Spotlight Mode (`90px`–`110px` height) and Full Workspace Mode.
+     - Top match is auto-highlighted; `Tab` or row click accepts immediately (appending a trailing space when needed); `Up`/`Down` navigate rows (`Enter` accepts after navigation, while unnavigated `Enter` submits/executes typed text directly); `Esc` closes the popup without clearing text; hides silently on zero matches or an exact-case sole match.
 
 ### Surface 2: Segmented View Tabs
 
@@ -200,7 +204,7 @@ Arranged left-to-right on a single `8px`-spaced horizontal row:
   - Editable **Task** Title (`QLineEdit`, transparent background, `13.5px` `600` `text_primary`, subtle bottom `border_focus` line on focus; `e` shortcut expands and selects text, `Enter` saves and collapses back to **Task List**).
   - Subtle creation metadata line (`Added Thu, Nov 26 · 18:12`, including year if different from current year) in `10.5px` `text_muted`.
   - Second compact control row (`8px` gap):
-    - Editable `@Requester` chip (`bg_elevated`, `1px solid border_subtle`, `4px` radius; clicking or `r` shortcut edits inline `@name`, placeholder `+ @requester`, `selectAll()` on `r`, `Enter` saves and collapses back to **Task List**).
+    - Editable `@Requester` chip (`bg_elevated`, `1px solid border_subtle`, `4px` radius; clicking or `r` shortcut edits inline `@name` or plain text, placeholder `+ @requester`, `selectAll()` on `r`). Typing or editing (with or without a leading `@`, though not immediately on initial `r` focus/selection) opens the same non-focus-stealing top-level **Requester** autocompletion floating popup (`bg_elevated` / `bg_surface`, `1px solid border_subtle`, `6px` radius, up to ~6 rows) anchored directly below the **Requester** chip—compatible with both Compact Spotlight Mode and Full Workspace Mode. `Tab`, row click, or navigated `Enter` accepts a suggestion and keeps focus in the field; unnavigated `Enter` saves (auto-canonicalizing against history excluding the edited **Task** itself) and collapses back to **Task List**; `Esc` closes an open popup first before saving/collapsing on the next `Esc`.
     - **Task Status** selector pill (`Todo` / `Waiting` / `Done` cycle or mini-segmented toggle).
     - Spacer + **Task Timer** button (`26px` height, `6px` radius): `"Start Timer"` (`bg_elevated`, `1px solid border_subtle`, play triangle) or `"Stop 00:14:22"` (`tint_accent`, `1px solid tint_accent_border`, `status_doing` stop square + tabular clock).
 - **Section B — Freeform Notes (`Thinking Space`):**
@@ -270,11 +274,12 @@ Displayed when Tab `3 Summary` is active (replaces the **Task List** below the s
 ## 6. Motion, Focus & Keyboard Ergonomics (PySide6)
 
 - **Frequency-gated motion:**
-  - `0ms` instant: tab switches, `↓`/`↑` row selection, typing, `@Requester` pill parsing, timer digit updates.
+  - `0ms` instant: tab switches, `↓`/`↑` row selection, typing, `@Requester` pill parsing, **Requester** autocompletion popup show/hide and `↑`/`↓` row highlight, timer digit updates.
   - `160ms` `QEasingCurve.OutCubic`: **Thinking Space** expand/collapse (`QPropertyAnimation`), **Idle Check** banner reveal/dismiss.
   - `100ms`: button hover/press tint; **Settings** modal fade (`opacity 0.0 -> 1.0`).
 - **Focus order:** `Quick Bar` -> `Segmented Tabs` -> `Task List` -> (if expanded) `Thinking Space` controls (`Title` -> `@Requester` -> `Timer` -> `Notes` -> `Sub-steps` -> `Work Sessions`).
-- **Global Spotlight Behavior:** Pressing global hotkey (`Ctrl+Alt+Space` default) toggles window visibility, centers/restores last position on current active monitor, and focuses the **Quick Bar** immediately (`selectAll()` or cursor at end). Pressing `Esc` collapses an open **Thinking Space** or modal first; pressing `Esc` from root hides the spotlight window back to the system tray.
+- **Requester Autocompletion Popup Ergonomics:** The floating popup is strictly non-focus-stealing so keyboard focus remains in the **Quick Bar** or **Thinking Space** `@Requester` input at all times. When open, `Tab` or row click accepts immediately; `Up`/`Down` move suggestion selection (without shifting focus to the **Task List** or expanding Compact Spotlight Mode) and enable `Enter` to accept; unnavigated `Enter` submits typed text directly; `Esc` dismisses the popup first before clearing the **Quick Bar** or exiting/collapsing the **Thinking Space** **Requester** field.
+- **Global Spotlight Behavior:** Pressing global hotkey (`Ctrl+Alt+Space` default) toggles window visibility, centers/restores last position on current active monitor, and focuses the **Quick Bar** immediately (`selectAll()` or cursor at end). Pressing `Esc` closes an open **Requester** autocompletion popup, modal, or **Thinking Space** editor before clearing the **Quick Bar** or hiding the spotlight window back to the system tray.
 
 ---
 

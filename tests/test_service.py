@@ -820,3 +820,119 @@ def test_domain_date_formatting_helpers() -> None:
         )
         == "Nov 10 \u2013 Nov 26"
     )
+
+
+def test_service_suggest_requesters_ranking_dedup_done_and_exact_single() -> None:
+    clock = _FakeClock(datetime(2026, 11, 26, 9, 0, tzinfo=UTC))
+    with SQLiteRepository(":memory:") as repo:
+        service = TodoService(repo, clock=clock)
+
+        # Older Done task with "Adrian" should still be included & win capitalization
+        done_adrian = service.add_task_from_input("Old deploy @Adrian")
+        assert done_adrian is not None
+        service.toggle_done(done_adrian.id)
+
+        # Even if a lowercase "adrian" row exists directly in storage later & more frequently,
+        # canonicalization prefers highest uppercase count ("Adrian")
+        clock.advance(minutes=10)
+        repo.save_task(
+            Task(
+                id="raw-lower-1",
+                title="Lowercase one",
+                requester="adrian",
+                created_at=clock.current,
+                updated_at=clock.current,
+            )
+        )
+        clock.advance(minutes=1)
+        repo.save_task(
+            Task(
+                id="raw-lower-2",
+                title="Lowercase two",
+                requester="adrian",
+                created_at=clock.current,
+                updated_at=clock.current,
+            )
+        )
+
+        # Frequency tie-breaker at the same updated_at timestamp:
+        # "Bob" (count=2) vs "Ben" (count=1) at t=same
+        clock.advance(minutes=10)
+        service.add_task_from_input("Task for Ben @Ben")
+        service.add_task_from_input("Task 1 for Bob @Bob")
+        service.add_task_from_input("Task 2 for Bob @Bob")
+
+        # Substring vs prefix: "Hannah" is newer, "Andreas" is older, query "an" puts prefix first
+        clock.advance(minutes=10)
+        service.add_task_from_input("Older prefix @Andreas")
+        clock.advance(minutes=10)
+        service.add_task_from_input("Newer substring @Hannah")
+
+        # Most recent requester overall: "Adrianna"
+        clock.advance(minutes=10)
+        service.add_task_from_input("Latest task @Adrianna")
+
+        # Bare "@" lists all canonicalized requesters ordered by recency, then count
+        assert service.suggest_requesters("@") == [
+            "Adrianna",
+            "Hannah",
+            "Andreas",
+            "Bob",
+            "Ben",
+            "Adrian",
+        ]
+        assert service.suggest_requesters("", limit=3) == ["Adrianna", "Hannah", "Andreas"]
+
+        # Prefix tier 0 ("Andreas") before substring tier 1 ("Adrianna", "Hannah", "Adrian")
+        assert service.suggest_requesters("an") == ["Andreas", "Adrianna", "Hannah", "Adrian"]
+
+        # Multiple matches keep suggestions visible even when one matches exact prefix
+        assert service.suggest_requesters("@Adr") == ["Adrianna", "Adrian"]
+        assert service.suggest_requesters("@Adrian") == ["Adrianna", "Adrian"]
+
+        # Sole exact case-sensitive match is hidden when hide_if_exact_single=True
+        assert service.suggest_requesters("@Hannah") == []
+        assert service.suggest_requesters("Hannah") == []
+        assert service.suggest_requesters("@Hannah", hide_if_exact_single=False) == ["Hannah"]
+
+        # Sole case-mismatched query suggests canonical casing
+        assert service.suggest_requesters("@hannah") == ["Hannah"]
+
+
+def test_service_requester_canonicalization_on_add_and_update() -> None:
+    clock = _FakeClock(datetime(2026, 11, 26, 10, 0, tzinfo=UTC))
+    with SQLiteRepository(":memory:") as repo:
+        service = TodoService(repo, clock=clock)
+
+        t1 = service.add_task_from_input("Fix cache @Adrian")
+        clock.advance(minutes=5)
+        t2 = service.add_task_from_input("Review docs @adrian")
+        assert t1 is not None and t2 is not None
+        assert t1.requester == "Adrian"
+        assert t2.requester == "Adrian"
+
+        # Higher-uppercase input wins and canonicalizes subsequent lowercase entries
+        clock.advance(minutes=5)
+        t3 = service.add_task_from_input("Audit auth @apiTeam")
+        assert t3 is not None and t3.requester == "apiTeam"
+        clock.advance(minutes=5)
+        t4 = service.add_task_from_input("Check metrics @APITeam")
+        assert t4 is not None and t4.requester == "APITeam"
+        clock.advance(minutes=5)
+        t5 = service.add_task_from_input("Scale workers @apiteam")
+        assert t5 is not None and t5.requester == "APITeam"
+
+        # update_task canonicalizes against existing tasks
+        clock.advance(minutes=5)
+        updated_t3 = service.update_task(t3.id, requester="@apiteam")
+        assert updated_t3.requester == "APITeam"
+
+        # Fixing capitalization on the sole task holding "@ALLCAPS" excludes itself
+        t_sole = service.add_task_from_input("Fix typo @ALLCAPS")
+        assert t_sole is not None and t_sole.requester == "ALLCAPS"
+        fixed_sole = service.update_task(t_sole.id, requester="AllCaps")
+        assert fixed_sole.requester == "AllCaps"
+
+        # Clearing requester via None or whitespace/bare '@' stores None
+        assert service.update_task(t_sole.id, requester=None).requester is None
+        assert service.update_task(t5.id, requester="  @  ").requester is None

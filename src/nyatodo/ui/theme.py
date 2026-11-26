@@ -141,7 +141,14 @@ def load_bundled_fonts() -> str:
     _LOADED_FONT_FAMILY = family_name
     app = QGuiApplication.instance()
     if app is not None:
-        QGuiApplication.setFont(make_ui_font(13))
+        app_font = make_ui_font(13)
+        # Qt internal widgets (such as QDateEdit's calendar popup) read
+        # QGuiApplication.font().pointSize() and warn on -1 when pixelSize is used.
+        screen = QGuiApplication.primaryScreen()
+        screen_dpi = screen.logicalDotsPerInch() if screen is not None else 0.0
+        dpi = screen_dpi if screen_dpi > 0 else 96.0
+        app_font.setPointSizeF(round((13.0 * 72.0) / dpi, 2))
+        QGuiApplication.setFont(app_font)
     return family_name
 
 

@@ -9,6 +9,7 @@ from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
     QObject,
+    QPoint,
     QPropertyAnimation,
     QRectF,
     QSize,
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
 from nyatodo.domain import SubStep, Task, TaskStatus, WorkSession, format_task_added_full
 from nyatodo.ui.icons import create_close_icon, create_play_icon, create_stop_icon
 from nyatodo.ui.qt_helpers import clear_layout, set_qss_property
+from nyatodo.ui.requester_autocomplete_popup import RequesterAutocompletePopup
 from nyatodo.ui.theme import (
     DARK_TOKENS,
     ColorTokens,
@@ -220,6 +222,31 @@ class _WorkSessionRowWidget(_HoverDeleteRow):
         self.register_delete_button(self.delete_button)
 
 
+class _RequesterLineEdit(QLineEdit):
+    """Inline Requester input keeping Tab inside the editor while autocomplete is visible."""
+
+    def __init__(
+        self,
+        is_popup_visible: Callable[[], bool],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._is_popup_visible = is_popup_visible
+
+    def event(self, event: QEvent) -> bool:
+        if (
+            self._is_popup_visible()
+            and event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() == Qt.Key.Key_Tab
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+        ):
+            self.keyPressEvent(event)
+            if event.isAccepted():
+                return True
+        return super().event(event)
+
+
 class ThinkingSpaceWidget(QFrame):
     """Inline Thinking Space container nested under the expanded Task Row."""
 
@@ -246,6 +273,7 @@ class ThinkingSpaceWidget(QFrame):
         now: datetime,
         tokens: ColorTokens = DARK_TOKENS,
         local_tz: tzinfo | None = None,
+        requester_suggester: Callable[[str], list[str]] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -255,10 +283,15 @@ class ThinkingSpaceWidget(QFrame):
         self._now = now
         self._tokens = tokens
         self._local_tz = local_tz
+        self._requester_suggester = requester_suggester
         self._loading = False
         self._notes_dirty = False
         self._collapsing = False
         self._collapse_callback: Callable[[], None] | None = None
+
+        self.requester_popup = RequesterAutocompletePopup(self)
+        self.requester_popup.apply_theme(tokens)
+        self.requester_popup.requester_selected.connect(self._apply_requester_suggestion)
 
         self._notes_timer = QTimer(self)
         self._notes_timer.setSingleShot(True)
@@ -303,11 +336,12 @@ class ThinkingSpaceWidget(QFrame):
         controls_row.setContentsMargins(0, 0, 0, 0)
         controls_row.setSpacing(6)
 
-        self.requester_edit = QLineEdit(self)
+        self.requester_edit = _RequesterLineEdit(self.is_requester_popup_visible, self)
         self.requester_edit.setObjectName("ThinkingRequesterEdit")
         self.requester_edit.setFont(make_ui_font(11))
         self.requester_edit.setPlaceholderText("+ @requester")
         self.requester_edit.setFixedSize(120, 22)
+        self.requester_edit.textEdited.connect(self._on_requester_text_edited)
         self.requester_edit.editingFinished.connect(self._commit_requester)
         controls_row.addWidget(self.requester_edit)
 
@@ -538,8 +572,23 @@ class ThinkingSpaceWidget(QFrame):
         self._height_anim.setEndValue(target_height)
         self._height_anim.start()
 
+    def set_requester_suggester(self, suggester: Callable[[str], list[str]] | None) -> None:
+        """Configure callback providing Requester autocompletion suggestions."""
+        self._requester_suggester = suggester
+        if suggester is None:
+            self.dismiss_requester_autocomplete()
+
+    def is_requester_popup_visible(self) -> bool:
+        """Return True when the Requester autocomplete popup is currently visible."""
+        return self.requester_popup.isVisible()
+
+    def dismiss_requester_autocomplete(self) -> None:
+        """Hide the Requester autocomplete popup and reset navigation state."""
+        self.requester_popup.hide_popup()
+
     def animate_collapse(self, on_finished: Callable[[], None]) -> None:
         """Animate Thinking Space collapse over 160ms OutCubic and invoke on_finished."""
+        self.dismiss_requester_autocomplete()
         if self._collapsing:
             return
         self._height_anim.stop()
@@ -559,8 +608,9 @@ class ThinkingSpaceWidget(QFrame):
         self._commit_requester()
 
     def apply_theme(self, tokens: ColorTokens) -> None:
-        """Refresh custom-painted checkboxes and button icons for updated theme tokens."""
+        """Refresh custom-painted checkboxes, icons, and autocomplete popup for updated theme."""
         self._tokens = tokens
+        self.requester_popup.apply_theme(tokens)
         for checkbox in self.findChildren(_SubStepCheckBox):
             checkbox.apply_theme(tokens)
         for del_btn in self.findChildren(QToolButton, "RowDeleteButton"):
@@ -642,6 +692,12 @@ class ThinkingSpaceWidget(QFrame):
         if event.type() == QEvent.Type.KeyPress:
             key_event = event
             assert isinstance(key_event, QKeyEvent)
+            if (
+                watched is self.requester_edit
+                and self.requester_popup.isVisible()
+                and self._handle_requester_popup_key(key_event)
+            ):
+                return True
             if key_event.key() == Qt.Key.Key_Escape:
                 self.flush_pending_saves()
                 self.collapse_requested.emit()
@@ -686,8 +742,71 @@ class ThinkingSpaceWidget(QFrame):
             if watched is self.notes_editor:
                 self._notes_timer.stop()
                 self._flush_notes()
+            elif watched is self.requester_edit:
+                self.dismiss_requester_autocomplete()
             self.editor_focus_changed.emit()
         return super().eventFilter(watched, event)
+
+    def _handle_requester_popup_key(self, key_event: QKeyEvent) -> bool:
+        key = key_event.key()
+        mods = key_event.modifiers()
+        has_non_keypad_mod = bool(
+            mods
+            & (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.AltModifier
+                | Qt.KeyboardModifier.ShiftModifier
+                | Qt.KeyboardModifier.MetaModifier
+            )
+        )
+        if key == Qt.Key.Key_Down and mods == Qt.KeyboardModifier.NoModifier:
+            self.requester_popup.move_selection(1)
+            return True
+        if key == Qt.Key.Key_Up and mods == Qt.KeyboardModifier.NoModifier:
+            self.requester_popup.move_selection(-1)
+            return True
+        if key == Qt.Key.Key_Tab and mods == Qt.KeyboardModifier.NoModifier:
+            self._accept_requester_suggestion()
+            return True
+        if key == Qt.Key.Key_Escape:
+            self.dismiss_requester_autocomplete()
+            return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not has_non_keypad_mod:
+            if self.requester_popup.has_explicit_navigation():
+                self._accept_requester_suggestion()
+                return True
+            self.dismiss_requester_autocomplete()
+        return False
+
+    def _on_requester_text_edited(self, text: str) -> None:
+        if self._loading or self._requester_suggester is None or not text.strip():
+            self.dismiss_requester_autocomplete()
+            return
+        suggestions = self._requester_suggester(text)
+        if not suggestions:
+            self.dismiss_requester_autocomplete()
+            return
+        anchor = self.requester_edit.mapToGlobal(QPoint(0, self.requester_edit.height() + 4))
+        win = self.window()
+        clamp_bounds = win.frameGeometry() if win is not None and win.isVisible() else None
+        self.requester_popup.show_suggestions(suggestions, anchor, clamp_bounds=clamp_bounds)
+
+    def _accept_requester_suggestion(self) -> None:
+        suggestion = self.requester_popup.current_suggestion()
+        if suggestion is None:
+            self.dismiss_requester_autocomplete()
+            return
+        self._apply_requester_suggestion(suggestion)
+
+    def _apply_requester_suggestion(self, name: str) -> None:
+        clean = name.strip().lstrip("@")
+        if not clean:
+            self.dismiss_requester_autocomplete()
+            return
+        self.requester_edit.setText(f"@{clean}")
+        self.requester_edit.setCursorPosition(len(self.requester_edit.text()))
+        self.dismiss_requester_autocomplete()
+        self.requester_edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_height_anim_finished(self) -> None:
         if self._collapsing:

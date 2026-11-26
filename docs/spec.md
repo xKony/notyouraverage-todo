@@ -27,10 +27,11 @@
   - **Quit** (cleanly stops and persists any running **Task Timers** before exiting)
 - **Global Hotkey**: Defaults to `Ctrl+Alt+Space` (configurable in Settings). Pressing it toggles visibility and brings the spotlight window to the foreground with the Quick Bar focused.
 - **Layered `Esc` Behavior**:
-  1. Inside an open modal (**Settings**, **Activity Summary** period modal) or filter popover: `Esc` cancels/closes the overlay.
-  2. Inside an open editor or **Thinking Space** field (title edit, **Requester** edit, notes, **Sub-step** input, or manual **Work Session** entry): `Esc` auto-saves and exits/collapses the field back to **Task List** navigation.
-  3. When the Quick Bar has non-empty text or active filter query: `Esc` clears the Quick Bar and returns to the unfiltered **Task List**.
-  4. At the top level (**Task List** with no open inline editor, or empty Quick Bar): `Esc` hides the window to the system tray.
+  1. An open **Requester** autocompletion popup (in the Quick Bar or **Thinking Space**): `Esc` closes the popup first without clearing the Quick Bar or collapsing/exiting the inline **Requester** editor.
+  2. Inside an open modal (**Settings**, **Activity Summary** period modal) or filter popover: `Esc` cancels/closes the overlay.
+  3. Inside an open editor or **Thinking Space** field (title edit, **Requester** edit, notes, **Sub-step** input, or manual **Work Session** entry): `Esc` auto-saves and exits/collapses the field back to **Task List** navigation.
+  4. When the Quick Bar has non-empty text or active filter query: `Esc` clears the Quick Bar and returns to the unfiltered **Task List**.
+  5. At the top level (**Task List** with no open inline editor, or empty Quick Bar): `Esc` hides the window to the system tray.
 
 ---
 
@@ -42,8 +43,32 @@
   - Any `@name` token (e.g., `@alice`) sets the optional **Requester** on the created **Task** and is stripped from the **Task** title.
   - All other symbols (`#`, `!`, `/`, `:`, punctuation, URLs, etc.) remain literal text in the title.
   - Only the first valid `@name` token sets `Requester` (or whitespace-normalized trailing/embedded `@name`); if no `@name` token is present, `Requester` is `None`.
-- **Live Match Preview**: As the user types in capture mode, matching existing **Tasks** (by title or **Requester**) preview dynamically in the **Task List** below. Pressing `Down` moves focus directly into the matching **Task** list instead of creating a new **Task**.
+- **Live Match Preview**: As the user types in capture mode, matching existing **Tasks** (by title or **Requester**) preview dynamically in the **Task List** below. Pressing `Down` moves focus directly into the matching **Task** list instead of creating a new **Task** (unless navigating an open **Requester** autocompletion popup).
 - **Filter / Search Mode (`/`)**: Starting input with `/` enters pure filter/search mode across the **Task List** without creating a **Task** on `Enter`.
+- **Requester Autocompletion & Canonicalization** (see [ADR 0003](adr/0003-requester-history-and-canonicalization.md)):
+  - **Surfaces**: Available in Quick Bar capture mode, Quick Bar `/` search mode, and the **Thinking Space** **Requester** field (`r` shortcut or click).
+  - **Triggering**:
+    - In the Quick Bar, triggers only when the cursor is inside or at the end of the **first** `@token` (including mid-sentence edits); any later `@` tokens remain literal **Task** title text.
+    - In the **Thinking Space** **Requester** field, triggers both with and without a leading `@` while typing or editing (not immediately upon initial `r` focus/selection).
+  - **Source, Deduplication & Ranking**:
+    - Derived dynamically from all stored **Tasks** (including `Done`).
+    - Deduplicated case-insensitively by keeping the variant with the **most uppercase characters** (tie-breaking by most recently used **Task**).
+    - Matched case-insensitively prefix-first, then substring, ordered by most recently used **Task** (with frequency as tie-breaker); a bare `@` displays the most recent **Requesters**.
+  - **Auto-Canonicalization on Save**:
+    - Quick Bar **Task** creation and **Thinking Space** **Requester** saves automatically resolve a typed name to the highest-capitalization case-insensitive match in history (e.g., `@adrian` -> `@Adrian`), even without pressing `Tab`.
+    - When updating a **Task** in **Thinking Space**, history checks exclude the edited **Task**'s own prior **Requester** value.
+  - **Keyboard & Popup Visibility**:
+    - The top match is auto-highlighted when the popup is shown.
+    - `Tab` or clicking a suggestion row accepts immediately (appending a trailing space in the Quick Bar when needed; keeping focus in the field in **Thinking Space**).
+    - `Up` / `Down` navigate suggestions (after which `Enter` also accepts the highlighted suggestion).
+    - Unnavigated `Enter` submits or executes the typed text directly so new **Requesters** (e.g., `@Bob` when `@Bobby` exists) are not hijacked.
+    - `Esc` closes the popup without clearing text or exiting the field.
+    - The popup hides silently when zero **Requesters** match or when the only match is already typed verbatim in exact case (`@Adrian`), while staying open when case differs (`@adrian` -> `@Adrian`) or longer matches exist.
+  - **Documented Caveats**:
+    1. *All-caps sticky bias*: Because deduplication and auto-canonicalization prefer the variant with the most uppercase characters, an accidental all-caps entry (e.g., `@ADRIAN`) outranks `@Adrian` until that **Task**'s **Requester** is edited or deleted. (Editing a **Task** in **Thinking Space** excludes that **Task**'s own prior value when checking history, so fixing the sole `@ADRIAN` **Task** to `@Adrian` succeeds.)
+    2. *Task-derived history*: Deleting all **Tasks** for a **Requester** removes them from suggestions, whereas `Done` **Tasks** keep them available.
+    3. *First-`@` only & unnavigated `Enter`*: Only the first `@token` triggers autocomplete in the Quick Bar, and unnavigated `Enter` submits typed text directly (subject to exact case-insensitive canonicalization) rather than accepting a prefix match.
+    4. *Compact Spotlight Mode*: Uses a top-level non-focus-stealing popup window so suggestions are not clipped by the compact window height.
 
 ---
 
@@ -91,7 +116,7 @@ When focus is in the **Task List** (not inside a text input):
 | `Alt+Up` / `Alt+Down` | Move **Task** up or down within its status group (in `Manual` sort) |
 | `1` / `2` / `3` | Switch view (`Active` · `Waiting` · `Activity Summary`) |
 | `Ctrl+,` | Open Settings modal |
-| `Esc` | Layered escape (close modal/popover -> collapse inline editor -> clear bar -> hide to tray) |
+| `Esc` | Layered escape (close autocomplete/modal/popover -> collapse inline editor -> clear bar -> hide to tray) |
 
 - **Show Shortcut Hints**: A toggleable setting (`On` / `Off`) displays subtle keycap hints in the footer and row actions to aid shortcut discovery.
 
@@ -101,7 +126,7 @@ When focus is in the **Task List** (not inside a text input):
 
 Expanding a **Task** opens its inline **Thinking Space** containing:
 
-- **Inline Title & Requester Edit**: Click or use direct-edit shortcuts (`e` for **Task** title, `r` for **Requester**, both selecting existing text) to edit the **Task** title and optional **Requester** (`@name` or plain text). Pressing `Enter` saves and collapses the **Thinking Space** back to **Task List** navigation; edits also auto-save on blur or `Esc`.
+- **Inline Title & Requester Edit**: Click or use direct-edit shortcuts (`e` for **Task** title, `r` for **Requester**, both selecting existing text) to edit the **Task** title and optional **Requester** (`@name` or plain text). Typing or editing in the **Requester** field opens **Requester** autocompletion (both with and without a leading `@`, though not immediately on initial `r` focus/selection), and saving auto-canonicalizes against history excluding the edited **Task** itself. Pressing `Enter` accepts a highlighted suggestion while keeping focus if navigated with `Up`/`Down`, or saves and collapses the **Thinking Space** back to **Task List** navigation; edits also auto-save on blur or `Esc` (closing an open autocompletion popup first).
 - **Freeform Notes**: Auto-saved plain-text notes area (`n` shortcut focuses with cursor at the end) where `Enter` inserts a newline, with debounced persistence and immediate flush on `Ctrl+Enter`, `Esc`, or window hide.
 - **Sub-steps**: Ordered, checkable action items inside the **Thinking Space** with inline add (`s` shortcut focuses `+ Add sub-step...`; `Enter` adds the **Sub-step** and keeps focus in the input for rapid multi-step entry), toggle complete, and remove.
 - **Work Sessions**: List of recorded **Work Sessions** for the **Task**, supporting:
@@ -138,10 +163,10 @@ Configurable preferences persisted locally:
 All core logic is built test-first against four explicit, Qt-free seams before UI integration:
 
 1. **`QuickBarParser` (`parse_quick_input`)** in `nyatodo.domain`:
-   - Parses raw Quick Bar text into structured intent: capture vs. filter mode (`/`), clean **Task** title, optional **Requester** from `@name`, while preserving all other symbols literally.
+   - Parses raw Quick Bar text into structured intent: capture vs. filter mode (`/`), clean **Task** title, optional **Requester** from `@name`, while preserving all other symbols literally; also provides pure active-`@token` parsing and completion helpers (detecting an active first `@token` at cursor position and applying accepted **Requester** completions).
 2. **`SQLiteRepository`** in `nyatodo.storage`:
    - Owns SQLite connection, schema initialization, and CRUD/query operations for **Tasks**, **Sub-steps**, **Work Sessions**, active **Task Timers**, ordering, and settings, parameterized by an injectable database path (`:memory:` or temp path in tests).
 3. **`TodoService`** in `nyatodo.service`:
-   - Orchestrates **Task** lifecycle (`Todo` -> `Doing` auto-promotion on timer start, staying `Doing` on pause, `Waiting`, `Done`/reopen), within-group reordering, creation-date filtering/sorting, **Thinking Space** updates, concurrent **Task Timers**, **Activity Summary** interval-union wall-clock math across days/**Work Weeks**/custom ranges, idle trim calculations, and clean shutdown timer persistence with an injectable clock.
+   - Orchestrates **Task** lifecycle (`Todo` -> `Doing` auto-promotion on timer start, staying `Doing` on pause, `Waiting`, `Done`/reopen), within-group reordering, creation-date filtering/sorting, **Thinking Space** updates, **Requester** suggestion ranking/deduplication and save-time canonicalization over stored **Task** history, concurrent **Task Timers**, **Activity Summary** interval-union wall-clock math across days/**Work Weeks**/custom ranges, idle trim calculations, and clean shutdown timer persistence with an injectable clock.
 4. **`PlatformBridge`** in `nyatodo.platform_win32`:
    - Defines a clean interface (`Protocol` / abstract boundary) for global hotkey registration/unregistration, idle-duration queries (`GetLastInputInfo`), and system theme detection, with Win32 `ctypes` implementation isolated behind it so service and UI tests can use deterministic fakes.

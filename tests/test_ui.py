@@ -7,7 +7,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QPointF, Qt
+from PySide6.QtCore import (
+    QByteArray,
+    QEvent,
+    QMessageLogContext,
+    QObject,
+    QPoint,
+    QPointF,
+    Qt,
+    QtMsgType,
+    qInstallMessageHandler,
+)
 from PySide6.QtGui import QCursor, QEnterEvent, QGuiApplication, QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -36,6 +46,7 @@ from nyatodo.service import TodoService
 from nyatodo.storage import SQLiteRepository
 from nyatodo.ui.hints_footer import HintContext
 from nyatodo.ui.main_window import MainWindow, ViewTab
+from nyatodo.ui.requester_autocomplete_popup import RequesterAutocompletePopup
 from nyatodo.ui.task_row import TaskRowWidget
 from nyatodo.ui.theme import DARK_TOKENS, LIGHT_TOKENS, load_bundled_fonts, make_ui_font
 from nyatodo.ui.thinking_space import ThinkingSpaceWidget
@@ -1597,3 +1608,290 @@ def test_requester_pills_pack_inline_on_initial_cold_start_show(
     finally:
         window.tick_timer.stop()
         repo.close()
+
+
+def test_quick_bar_requester_autocomplete_capture_navigation_and_compact_mode(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, clock, _platform, repo = make_window(qtbot, tmp_path, show=False)
+    try:
+        # Seed history including a Done task, a lowercase variant, and Bobby
+        done_task = service.add_task_from_input("Archived work @DoneContact")
+        assert done_task is not None
+        service.toggle_done(done_task.id)
+        clock.advance(minutes=1)
+        service.add_task_from_input("Lowercase first @adrian")
+        clock.advance(minutes=1)
+        service.add_task_from_input("Proper case second @Adrian")
+        clock.advance(minutes=1)
+        service.add_task_from_input("Bobby task @Bobby")
+        clock.advance(minutes=1)
+
+        # Open in Compact Spotlight Mode
+        window.toggle_spotlight()
+        QApplication.processEvents()
+        assert window.is_compact()
+        popup: RequesterAutocompletePopup = window.quick_bar.requester_popup
+        assert popup.isWindow()
+
+        # 1. Bare '@' lists recent requesters including Done tasks, unclipped below compact bar
+        QTest.keyClicks(window.quick_bar.input_edit, "Follow up @")
+        QApplication.processEvents()
+        assert popup.isVisible()
+        assert popup.suggestions()[:3] == ["Bobby", "Adrian", "DoneContact"]
+        assert popup.current_suggestion() == "Bobby"
+        assert not popup.has_explicit_navigation()
+        bar_bottom = window.quick_bar.mapToGlobal(QPoint(0, window.quick_bar.height())).y()
+        assert popup.y() >= bar_bottom
+        assert popup.height() >= 36
+        assert window.is_compact()
+
+        # 2. Typing 'ad' shows canonical '@Adrian' (even though lowercase 'adrian' also exists)
+        window.quick_bar.clear()
+        QTest.keyClicks(window.quick_bar.input_edit, "Ping @ad")
+        QApplication.processEvents()
+        assert popup.isVisible()
+        assert popup.suggestions() == ["Adrian"]
+
+        # Typing '@adrian' keeps popup open because case differs from canonical '@Adrian'
+        QTest.keyClicks(window.quick_bar.input_edit, "rian")
+        QApplication.processEvents()
+        assert window.quick_bar.text() == "Ping @adrian"
+        assert popup.isVisible()
+        assert popup.suggestions() == ["Adrian"]
+
+        # Exact case-sensitive sole match '@Adrian' hides popup silently
+        window.quick_bar.clear()
+        QTest.keyClicks(window.quick_bar.input_edit, "Ping @Adrian")
+        QApplication.processEvents()
+        assert not popup.isVisible()
+
+        # 3. Second '@' token does not trigger popup
+        QTest.keyClicks(window.quick_bar.input_edit, " and cc @bo")
+        QApplication.processEvents()
+        assert not popup.isVisible()
+
+        # 4. Tab accepts highlighted suggestion with trailing space and keeps focus in Quick Bar
+        window.quick_bar.clear()
+        QTest.keyClicks(window.quick_bar.input_edit, "Review @ad")
+        QApplication.processEvents()
+        assert popup.isVisible()
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        assert window.quick_bar.text() == "Review @Adrian "
+        assert window.quick_bar.input_edit.cursorPosition() == len("Review @Adrian ")
+        assert not popup.isVisible()
+        assert window.quick_bar.has_input_focus()
+        assert window.is_compact()
+
+        # 5. Up/Down + Enter accepts suggestion without submitting Task
+        window.quick_bar.clear()
+        QTest.keyClicks(window.quick_bar.input_edit, "Call @")
+        QApplication.processEvents()
+        assert popup.suggestions()[:2] == ["Bobby", "Adrian"]
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        assert popup.has_explicit_navigation()
+        assert popup.current_suggestion() == "Adrian"
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Up)
+        assert popup.current_suggestion() == "Bobby"
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Return)
+        QApplication.processEvents()
+        assert window.quick_bar.text() == "Call @Adrian "
+        assert not popup.isVisible()
+        assert window.quick_bar.has_input_focus()
+
+        # 6. Esc closes popup without clearing text; next Esc clears Quick Bar
+        window.quick_bar.clear()
+        QTest.keyClicks(window.quick_bar.input_edit, "Sync @ad")
+        QApplication.processEvents()
+        assert popup.isVisible()
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Escape)
+        QApplication.processEvents()
+        assert not popup.isVisible()
+        assert window.quick_bar.text() == "Sync @ad"
+        assert window.isVisible()
+
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Escape)
+        QApplication.processEvents()
+        assert window.quick_bar.text() == ""
+
+        # 7. Unnavigated Enter submits '@Bob' directly even when '@Bobby' is highlighted
+        QTest.keyClicks(window.quick_bar.input_edit, "Check @Bob")
+        QApplication.processEvents()
+        assert popup.isVisible()
+        assert popup.current_suggestion() == "Bobby"
+        assert not popup.has_explicit_navigation()
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Return)
+        QApplication.processEvents()
+        assert not popup.isVisible()
+        assert window.quick_bar.text() == ""
+        bob_tasks = [t for t in service.list_active_tasks() if t.title == "Check"]
+        assert len(bob_tasks) == 1
+        assert bob_tasks[0].requester == "Bob"
+
+        # 8. Clicking a popup row completes with trailing space and preserves input focus
+        QTest.keyClicks(window.quick_bar.input_edit, "Meet @ad")
+        QApplication.processEvents()
+        assert popup.isVisible()
+        row_btn = next(
+            b
+            for b in popup.findChildren(QPushButton, "RequesterAutocompleteRow")
+            if b.property("requester_name") == "Adrian"
+        )
+        QTest.mouseClick(row_btn, Qt.MouseButton.LeftButton, pos=row_btn.rect().center())
+        QApplication.processEvents()
+        assert window.quick_bar.text() == "Meet @Adrian "
+        assert not popup.isVisible()
+        assert window.quick_bar.has_input_focus()
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_quick_bar_search_mode_requester_autocomplete(qtbot: QtBot, tmp_path: Path) -> None:
+    window, service, clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        service.add_task_from_input("Prepare deck @Adrian")
+        clock.advance(minutes=1)
+        service.add_task_from_input("Fix CI @Maya")
+
+        QTest.keyClicks(window.quick_bar.input_edit, "/@ad")
+        QApplication.processEvents()
+        popup = window.quick_bar.requester_popup
+        assert window.quick_bar.is_search_mode()
+        assert popup.isVisible()
+        assert popup.suggestions() == ["Adrian"]
+
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        assert window.quick_bar.text() == "/@Adrian "
+        assert not popup.isVisible()
+        assert window.quick_bar.has_input_focus()
+        assert len(window.displayed_task_ids()) == 1
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_thinking_space_requester_autocomplete_workflow(qtbot: QtBot, tmp_path: Path) -> None:
+    window, service, clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        service.add_task_from_input("Ref @Adrian")
+        clock.advance(minutes=1)
+        service.add_task_from_input("Ref @Adriana")
+        clock.advance(minutes=1)
+        service.add_task_from_input("Ref @Bobby")
+        clock.advance(minutes=1)
+        target = service.add_task_from_input("Target task @Maya")
+        assert target is not None
+        window.refresh_views()
+        window._select_task(target.id)
+        window.task_scroll.setFocus()
+        QApplication.processEvents()
+
+        # 1. 'r' expands and selects requester_edit without opening popup initially
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_R)
+        QApplication.processEvents()
+        ts = find_thinking_space(window)
+        assert ts.requester_edit.hasFocus()
+        assert ts.requester_edit.selectedText() == "@Maya"
+        assert not ts.requester_popup.isVisible()
+
+        # 2. Typing bare 'ad' opens popup; Tab fills '@Adriana' (most recent) and keeps focus
+        QTest.keyClicks(ts.requester_edit, "ad")
+        QApplication.processEvents()
+        assert ts.requester_popup.isVisible()
+        assert ts.requester_popup.suggestions() == ["Adriana", "Adrian"]
+        QTest.keyClick(ts.requester_edit, Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        assert ts.requester_edit.text() == "@Adriana"
+        assert not ts.requester_popup.isVisible()
+        assert ts.requester_edit.hasFocus()
+        assert window.expanded_task_id() == target.id
+
+        # 3. Typing '@ad', navigating with Down + Enter selects '@Adrian' without collapsing
+        ts.requester_edit.selectAll()
+        QTest.keyClicks(ts.requester_edit, "@ad")
+        QApplication.processEvents()
+        assert ts.requester_popup.isVisible()
+        QTest.keyClick(ts.requester_edit, Qt.Key.Key_Down)
+        assert ts.requester_popup.has_explicit_navigation()
+        assert ts.requester_popup.current_suggestion() == "Adrian"
+        QTest.keyClick(ts.requester_edit, Qt.Key.Key_Return)
+        QApplication.processEvents()
+        assert ts.requester_edit.text() == "@Adrian"
+        assert not ts.requester_popup.isVisible()
+        assert ts.requester_edit.hasFocus()
+        assert window.expanded_task_id() == target.id
+
+        # 4. Clicking a popup row fills requester and keeps focus in requester_edit
+        ts.requester_edit.selectAll()
+        QTest.keyClicks(ts.requester_edit, "ad")
+        QApplication.processEvents()
+        assert ts.requester_popup.isVisible()
+        adriana_btn = next(
+            b
+            for b in ts.requester_popup.findChildren(QPushButton, "RequesterAutocompleteRow")
+            if b.property("requester_name") == "Adriana"
+        )
+        QTest.mouseClick(adriana_btn, Qt.MouseButton.LeftButton, pos=adriana_btn.rect().center())
+        QApplication.processEvents()
+        assert ts.requester_edit.text() == "@Adriana"
+        assert not ts.requester_popup.isVisible()
+        assert ts.requester_edit.hasFocus()
+
+        # 5. Esc closes open popup first without collapsing; next Esc saves & collapses
+        ts.requester_edit.selectAll()
+        QTest.keyClicks(ts.requester_edit, "@Bob")
+        QApplication.processEvents()
+        assert ts.requester_popup.isVisible()
+        assert ts.requester_popup.suggestions() == ["Bobby"]
+        QTest.keyClick(ts.requester_edit, Qt.Key.Key_Escape)
+        QApplication.processEvents()
+        assert not ts.requester_popup.isVisible()
+        assert ts.requester_edit.hasFocus()
+        assert window.expanded_task_id() == target.id
+
+        QTest.keyClick(ts.requester_edit, Qt.Key.Key_Escape)
+        qtbot.waitUntil(lambda: window.findChild(ThinkingSpaceWidget, "ThinkingSpace") is None)
+        reloaded = service.get_task(target.id)
+        assert reloaded is not None and reloaded.requester == "Bob"
+
+        # 6. Unnavigated Enter in requester_edit saves typed text directly while popup is open
+        window.task_scroll.setFocus()
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_R)
+        QApplication.processEvents()
+        ts = find_thinking_space(window)
+        QTest.keyClicks(ts.requester_edit, "Bo")
+        QApplication.processEvents()
+        assert ts.requester_popup.isVisible()
+        assert not ts.requester_popup.has_explicit_navigation()
+        QTest.keyClick(ts.requester_edit, Qt.Key.Key_Return)
+        qtbot.waitUntil(lambda: window.findChild(ThinkingSpaceWidget, "ThinkingSpace") is None)
+        reloaded = service.get_task(target.id)
+        assert reloaded is not None and reloaded.requester == "Bo"
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_main_window_startup_emits_no_qfont_point_size_warnings(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    captured: list[str] = []
+
+    def _handler(_msg_type: QtMsgType, _ctx: QMessageLogContext, message: str) -> None:
+        captured.append(message)
+
+    previous = qInstallMessageHandler(_handler)
+    try:
+        window, _service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+        try:
+            assert QGuiApplication.font().pointSize() > 0
+            assert not any("QFont::setPointSize" in msg for msg in captured)
+        finally:
+            window.tick_timer.stop()
+            repo.close()
+    finally:
+        qInstallMessageHandler(previous)

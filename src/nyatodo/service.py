@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from enum import Enum, auto
 
@@ -43,6 +43,77 @@ _UNSET = _Unset.TOKEN
 
 def _default_clock() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass
+class _VariantStats:
+    last_used: float
+    count: int = 0
+
+
+@dataclass
+class _RequesterGroup:
+    variants: dict[str, _VariantStats]
+    max_last_used: float
+    total_count: int = 0
+
+
+def _utc_timestamp(dt: datetime) -> float:
+    aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    return aware.astimezone(UTC).timestamp()
+
+
+def _uppercase_count(text: str) -> int:
+    return sum(1 for ch in text if ch.isupper())
+
+
+def _pick_canonical_variant(variants: dict[str, _VariantStats]) -> str:
+    return min(
+        variants.items(),
+        key=lambda item: (
+            -_uppercase_count(item[0]),
+            -item[1].last_used,
+            -item[1].count,
+            item[0],
+        ),
+    )[0]
+
+
+def _aggregate_requesters(
+    tasks: list[Task],
+    *,
+    exclude_task_id: str | None = None,
+) -> dict[str, _RequesterGroup]:
+    groups: dict[str, _RequesterGroup] = {}
+    for task in tasks:
+        if exclude_task_id is not None and task.id == exclude_task_id:
+            continue
+        if task.requester is None:
+            continue
+        req = task.requester.strip()
+        if not req:
+            continue
+
+        key = req.lower()
+        ts = _utc_timestamp(task.updated_at)
+        group = groups.get(key)
+        if group is None:
+            groups[key] = _RequesterGroup(
+                variants={req: _VariantStats(last_used=ts, count=1)},
+                max_last_used=ts,
+                total_count=1,
+            )
+            continue
+
+        group.max_last_used = max(group.max_last_used, ts)
+        group.total_count += 1
+        variant = group.variants.get(req)
+        if variant is None:
+            group.variants[req] = _VariantStats(last_used=ts, count=1)
+        else:
+            variant.last_used = max(variant.last_used, ts)
+            variant.count += 1
+    return groups
 
 
 class TodoService:
@@ -113,11 +184,12 @@ class TodoService:
         now = self._clock()
         existing = self._repo.list_tasks(TaskStatus.TODO)
         next_sort_order = max((t.sort_order for t in existing), default=-1) + 1
+        canonical_requester = self._canonicalize_requester(parsed.requester)
         task = Task(
             id=str(uuid.uuid4()),
             title=parsed.title,
             status=TaskStatus.TODO,
-            requester=parsed.requester,
+            requester=canonical_requester,
             notes="",
             sort_order=next_sort_order,
             created_at=now,
@@ -188,6 +260,39 @@ class TodoService:
             or (task.requester is not None and title_needle in task.requester.lower())
         ]
 
+    def suggest_requesters(
+        self,
+        query: str,
+        *,
+        limit: int = 6,
+        hide_if_exact_single: bool = True,
+    ) -> list[str]:
+        """Suggest canonicalized Requester names matching query, ordered by relevance."""
+        if limit <= 0:
+            return []
+
+        groups = _aggregate_requesters(self._repo.list_tasks())
+        needle = query.strip().lstrip("@")
+        needle_lower = needle.lower()
+
+        candidates: list[tuple[int, float, int, str, str]] = []
+        for group in groups.values():
+            canon = _pick_canonical_variant(group.variants)
+            canon_lower = canon.lower()
+            if not needle_lower or canon_lower.startswith(needle_lower):
+                tier = 0
+            elif needle_lower in canon_lower:
+                tier = 1
+            else:
+                continue
+            candidates.append((tier, -group.max_last_used, -group.total_count, canon_lower, canon))
+
+        candidates.sort(key=lambda item: item[:4])
+        results = [item[4] for item in candidates[:limit]]
+        if hide_if_exact_single and needle and len(results) == 1 and results[0] == needle:
+            return []
+        return results
+
     def update_task(
         self,
         task_id: str,
@@ -206,8 +311,8 @@ class TodoService:
         elif requester is None:
             new_requester = None
         else:
-            cleaned_req = requester.strip().lstrip("@")
-            new_requester = cleaned_req or None
+            cleaned_req = requester.strip().lstrip("@") or None
+            new_requester = self._canonicalize_requester(cleaned_req, exclude_task_id=task_id)
 
         updated = replace(
             task,
@@ -216,6 +321,31 @@ class TodoService:
             updated_at=self._clock(),
         )
         return self._repo.save_task(updated)
+
+    def _canonicalize_requester(
+        self,
+        requester: str | None,
+        *,
+        exclude_task_id: str | None = None,
+    ) -> str | None:
+        if requester is None:
+            return None
+        cleaned = requester.strip().lstrip("@")
+        if not cleaned:
+            return None
+
+        groups = _aggregate_requesters(
+            self._repo.list_tasks(),
+            exclude_task_id=exclude_task_id,
+        )
+        group = groups.get(cleaned.lower())
+        if group is None:
+            return cleaned
+
+        best_match = _pick_canonical_variant(group.variants)
+        if _uppercase_count(best_match) > _uppercase_count(cleaned):
+            return best_match
+        return cleaned
 
     def update_notes(self, task_id: str, notes: str) -> Task:
         """Update freeform Thinking Space notes for a Task."""

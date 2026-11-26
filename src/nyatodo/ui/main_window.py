@@ -271,6 +271,7 @@ class MainWindow(QWidget):
         self.content_layout.addWidget(self._build_header(content_host))
 
         self.quick_bar = QuickBar(content_host)
+        self.quick_bar.set_requester_suggester(self._service.suggest_requesters)
         self.quick_bar.query_changed.connect(self._on_quick_query_changed)
         self.quick_bar.task_submitted.connect(self._on_quick_task_submitted)
         self.quick_bar.jump_to_list_requested.connect(self._focus_task_list)
@@ -578,9 +579,21 @@ class MainWindow(QWidget):
         self.quick_bar.focus_input(select_all=True)
         self._update_hints_context()
 
+    def dismiss_requester_popups(self) -> bool:
+        """Dismiss any open Requester autocomplete popup and return True if one was open."""
+        dismissed = False
+        if self.quick_bar.is_autocomplete_visible():
+            self.quick_bar.dismiss_autocomplete()
+            dismissed = True
+        if self._thinking_widget is not None and self._thinking_widget.is_requester_popup_visible():
+            self._thinking_widget.dismiss_requester_autocomplete()
+            dismissed = True
+        return dismissed
+
     def hide_to_tray(self) -> None:
         """Flush any open Thinking Space edits and hide window."""
         self.focus_loss_timer.stop()
+        self.dismiss_requester_popups()
         if self.filter_popover.isVisible():
             self.filter_popover.close_popover()
         if self.requester_popover.isVisible():
@@ -622,6 +635,7 @@ class MainWindow(QWidget):
         """Collapse from Full Workspace Mode back into Compact Spotlight Mode."""
         if self._is_compact:
             return
+        self.dismiss_requester_popups()
         if self.settings_overlay.isVisible():
             self.settings_overlay.close_modal()
         if self.summary_period_modal.isVisible():
@@ -701,6 +715,7 @@ class MainWindow(QWidget):
 
     def switch_tab(self, tab: ViewTab) -> None:
         """Switch between Active, Waiting, and Activity Summary tabs."""
+        self.dismiss_requester_popups()
         if self._is_compact:
             self.expand_workspace()
         if self.filter_popover.isVisible():
@@ -719,6 +734,7 @@ class MainWindow(QWidget):
 
     def open_settings(self) -> None:
         """Open the centered Settings modal overlay."""
+        self.dismiss_requester_popups()
         if self._is_compact:
             self.expand_workspace()
         if self.filter_popover.isVisible():
@@ -732,6 +748,7 @@ class MainWindow(QWidget):
 
     def open_summary_period_modal(self) -> None:
         """Open the centered Activity Summary period selector modal."""
+        self.dismiss_requester_popups()
         if self._is_compact:
             self.expand_workspace()
         if self.filter_popover.isVisible():
@@ -923,6 +940,7 @@ class MainWindow(QWidget):
             header_rect = self.header_bar.geometry()
             shell_pos = self.shell.mapFrom(self, event.position().toPoint())
             if header_rect.contains(shell_pos):
+                self.dismiss_requester_popups()
                 self._drag_offset = (
                     event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 )
@@ -1004,6 +1022,8 @@ class MainWindow(QWidget):
             if fw is not None and self._thinking_widget.isAncestorOf(fw):
                 focused_name = fw.objectName()
 
+        if self._thinking_widget is not None:
+            self._thinking_widget.dismiss_requester_autocomplete()
         self._row_widgets.clear()
         self._thinking_widget = None
         self._empty_glyph_label = None
@@ -1046,6 +1066,7 @@ class MainWindow(QWidget):
                     now=now,
                     tokens=self._tokens,
                     local_tz=self._service.local_tz,
+                    requester_suggester=self._service.suggest_requesters,
                     parent=self.task_list_container,
                 )
                 self._connect_thinking_space(thinking)
@@ -1226,6 +1247,8 @@ class MainWindow(QWidget):
             self.refresh_views()
 
     def _handle_escape(self) -> None:
+        if self.dismiss_requester_popups():
+            return
         if self.settings_overlay.isVisible():
             self.settings_overlay.cancel_capture_or_close()
             return
