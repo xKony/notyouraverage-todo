@@ -1,65 +1,9 @@
 # Coding Standards
 
-All code in `nyatodo` follows these standards to keep the codebase predictable, strictly typed, and cleanly layered.
+Review guidelines for judgement calls in `nyatodo`. Mechanical lint, formatting, strict typing, layer imports, and Qt DPI rules live in [pyproject.toml](pyproject.toml) and [tests/test_arch.py](tests/test_arch.py).
 
----
-
-## 1. Python & Static Analysis
-
-- **Python Version**: Python `3.13+`. Use modern standard library features (`datetime.UTC`, `pathlib.Path`, `collections.abc`, `X | Y` union syntax, `StrEnum`).
-- **Type Annotations**: Full type annotations across all modules and tests. Code must pass `uv run mypy src tests` (`strict = true` in `pyproject.toml`) with zero errors.
-  - Avoid `Any` unless interfacing directly with untyped external boundaries (such as `ctypes` or Qt event overrides), enforced mechanically via Ruff `ANN401`.
-  - Prefer `Protocol` and `dataclass(frozen=True)` for clean interfaces and value objects.
-- **Formatting & Linting**: Code must pass `uv run ruff check src tests` and `uv run ruff format --check src tests`.
-  - Line length: `100` characters.
-  - Enabled lint rules: `E`, `F`, `I`, `UP`, `B`, `SIM`, `RUF`, `BLE001`, `S110`, `ANN401`.
-
----
-
-## 2. Architecture & Separation of Concerns
-
-Dependencies must flow strictly inward toward `nyatodo.domain`. Lower layers never import higher layers or Qt.
-
-- **`nyatodo.domain`**:
-  - Pure dataclasses, enums, Quick Bar parsing (`QuickBarParser` / `parse_quick_input`), and time/interval-union math.
-  - Zero I/O, zero SQL, zero Win32 calls, zero `PySide6` imports.
-- **`nyatodo.storage`**:
-  - SQLite persistence (`SQLiteRepository`), schema setup, and explicit SQL queries.
-  - Accepts an injectable database path (`Path | str`) so tests run against temporary files or `:memory:`.
-- **`nyatodo.service`**:
-  - Application use cases (`TodoService`): **Task** lifecycle, concurrent **Task Timers**, **Thinking Space** operations, **Activity Summary** aggregation, and idle trim handling.
-  - Accepts injectable repository, clock, and `PlatformBridge` dependencies.
-- **`nyatodo.platform_win32`**:
-  - Platform abstraction (`PlatformBridge` protocol) and Win32 `ctypes` implementation (`RegisterHotKey`, `GetLastInputInfo`, system theme query).
-  - Isolates all `ctypes` structs and Win32 error handling behind clean typed Python methods.
-- **`nyatodo.ui`**:
-  - `PySide6` widgets, spotlight window, tray integration, dialogs, and QSS stylesheets.
-  - **No raw SQL and no business/time-calculation logic inside Qt widgets.** Widgets call `TodoService` and render returned domain models.
-
----
-
-## 3. Canonical Domain Vocabulary
-
-Use the exact terms defined in [GLOSSARY.md](GLOSSARY.md) across symbols, modules, tests, comments, and UI copy:
-
-- `Task` (avoid: ticket, issue, inbox item, card)
-- `TaskList` / **Task List** (avoid: backlog, inbox, board)
-- `Requester` (avoid: assignee, reporter, attribution, link)
-- `TaskStatus` (`Todo`, `Doing`, `Waiting`, `Done`) (avoid: stage, column, priority)
-- `ThinkingSpace` (avoid: description, wiki, sub-page)
-- `SubStep` / **Sub-step** (avoid: sub-task, child ticket, checklist card)
-- `TaskTimer` (avoid: focus lock, Pomodoro clock)
-- `WorkSession` (avoid: timesheet, billable entry, Pomodoro)
-- `ActivitySummary` / **Activity Summary** (avoid: Daily Summary, standup report, export, timesheet)
-- `Work Week` (Monday through Sunday; avoid: business week, Monday-to-Friday week)
-
----
-
-## 4. Functions, Error Handling & Testing
-
-- **Small, Focused Functions**: Keep functions concise with shallow nesting and early returns. Extract shared helpers rather than duplicating logic.
-- **No Silent Exception Swallowing**: Never write bare `except:` or silent `except Exception: pass`. Catch specific exceptions, log or surface actionable failures, and keep resource cleanup deterministic (`with` context managers).
-- **Test-First Vertical Slices**:
-  - Test against public seams (`parse_quick_input`, `SQLiteRepository`, `TodoService`, `PlatformBridge`), not private helpers or implementation internals.
-  - Use deterministic clocks and fake `PlatformBridge` implementations instead of real wall-clock sleeps in tests.
-  - All tests must pass via `uv run pytest`.
+- **Static Typing Boundaries**: Avoid `Any`; reserve it strictly for untyped Win32 `ctypes` or Qt event overrides. Prefer `Protocol` and `dataclass(frozen=True)` for seams and value objects.
+- **Domain & Layer Discipline**: Keep business logic, parsing, and time math out of Qt widgets ([AGENTS.md](AGENTS.md)). Use the exact domain terms from [GLOSSARY.md](GLOSSARY.md) in symbols, comments, and UI copy.
+- **Cohesive Functions**: Keep functions focused with shallow nesting and early returns. Reuse shared helpers instead of duplicating non-trivial branches.
+- **Explicit Error Handling**: Catch specific exceptions, surface or log actionable failures, and manage resources deterministically with context managers.
+- **Tests at Real Seams**: Test public seams (`parse_quick_input`, `SQLiteRepository`, `TodoService`, `PlatformBridge`, rendered widget behavior) using deterministic clocks and fake `PlatformBridge` implementations instead of wall-clock sleeps.

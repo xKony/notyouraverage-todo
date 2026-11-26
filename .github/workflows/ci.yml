@@ -41,3 +41,9 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run pytest
+
+      - name: Run UI tests at 150% DPI scaling
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: "1.5"
+        run: uv run pytest tests/test_ui.py
