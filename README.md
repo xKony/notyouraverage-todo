@@ -33,3 +33,7 @@ uv run mypy src tests
 - [Specification](docs/spec.md)
 - [Coding Standards](CODING_STANDARDS.md)
 - [ADRs](docs/adr/)
+
+## License
+
+Built by [xKony](https://github.com/xKony). Released under the [MIT License](LICENSE).

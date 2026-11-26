@@ -1,16 +1,37 @@
 """PySide6 / pytest-qt UI integration tests for nyatodo."""
 
+import ctypes
+import sys
+from ctypes import wintypes
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+import pytest
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QPointF, Qt
 from PySide6.QtGui import QCursor, QEnterEvent, QGuiApplication, QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QPushButton, QToolButton
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QLabel,
+    QPushButton,
+    QToolButton,
+    QWidget,
+)
 from pytestqt.qtbot import QtBot
 
 from nyatodo.app import build_application
-from nyatodo.domain import IdleThreshold, TaskStatus, ThemeMode
+from nyatodo.domain import (
+    AutoHideDelay,
+    IdleThreshold,
+    Settings,
+    SummaryPeriod,
+    TaskDateFilterMode,
+    TaskSortMode,
+    TaskStatus,
+    ThemeMode,
+)
+from nyatodo.platform_win32 import WM_HOTKEY
 from nyatodo.service import TodoService
 from nyatodo.storage import SQLiteRepository
 from nyatodo.ui.hints_footer import HintContext
@@ -491,6 +512,11 @@ def test_settings_modal_theme_hints_and_hotkey_update(qtbot: QtBot, tmp_path: Pa
         window.settings_overlay.idle_combo.setCurrentIndex(idx_30)
         assert service.get_settings().idle_threshold == IdleThreshold.THIRTY_MIN
 
+        # Change Auto-Hide on Focus Loss to 5s
+        idx_5s = window.settings_overlay.auto_hide_combo.findData(AutoHideDelay.FIVE_SEC)
+        window.settings_overlay.auto_hide_combo.setCurrentIndex(idx_5s)
+        assert service.get_settings().auto_hide_delay == AutoHideDelay.FIVE_SEC
+
         window.settings_overlay.done_button.click()
         assert not window.settings_overlay.isVisible()
     finally:
@@ -783,8 +809,791 @@ def test_start_compact_constructor_and_tray_full_workspace(qtbot: QtBot, tmp_pat
         repo.close()
 
 
-def test_bundled_inter_font_loads(qtbot: QtBot) -> None:
+def test_bundled_poppins_font_loads(qtbot: QtBot) -> None:
     loaded = load_bundled_fonts()
-    assert loaded == "Inter"
+    assert loaded == "Poppins"
     font = make_ui_font(13)
-    assert font.families()[0] == "Inter"
+    assert font.families()[0] == "Poppins"
+
+
+def test_morph_pills_filter_strip_and_hover_action_orbs(qtbot: QtBot, tmp_path: Path) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        t1 = service.add_task_from_input("Audit pill springs @Maya")
+        t2 = service.add_task_from_input("Polish summary bars @Alex")
+        assert t1 is not None and t2 is not None
+        service.toggle_timer(t1.id)
+        window.refresh_views()
+
+        # Dynamic @Requester filter pills appear and filter tasks cleanly
+        maya_pill = next(
+            btn
+            for btn in window.findChildren(QPushButton, "RequesterFilterPill")
+            if btn.text() == "@Maya"
+        )
+        maya_pill.click()
+        assert window.displayed_task_ids() == [t1.id]
+
+        # Clicking active @Requester pill again clears filter
+        maya_pill = next(
+            btn
+            for btn in window.findChildren(QPushButton, "RequesterFilterPill")
+            if btn.text() == "@Maya"
+        )
+        maya_pill.click()
+        assert set(window.displayed_task_ids()) == {t1.id, t2.id}
+
+        # Doing pill filters only Doing tasks
+        window.doing_filter_btn.click()
+        assert window.displayed_task_ids() == [t1.id]
+        window.active_tab_btn.click()
+        assert set(window.displayed_task_ids()) == {t1.id, t2.id}
+
+        # Hover action orbs reveal on enter and toggle timer / waiting
+        row_t2 = find_task_row(window, t2.id)
+        assert not row_t2.timer_orb.isVisible()
+        assert not row_t2.wait_orb.isVisible()
+        send_hover_enter(row_t2)
+        assert row_t2.timer_orb.isVisible()
+        assert row_t2.wait_orb.isVisible()
+
+        row_t2.timer_orb.click()
+        reloaded_t2 = service.get_task(t2.id)
+        assert reloaded_t2 is not None and reloaded_t2.is_timer_running
+
+        row_t2 = find_task_row(window, t2.id)
+        send_hover_enter(row_t2)
+        row_t2.wait_orb.click()
+        waiting_t2 = service.get_task(t2.id)
+        assert waiting_t2 is not None and waiting_t2.status == TaskStatus.WAITING
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+class _UnexpectedWindowSpy(QObject):
+    """Records unexpected top-level Show events or MainWindow deactivation during UI updates."""
+
+    def __init__(self, main_window: MainWindow) -> None:
+        super().__init__()
+        self._main_window = main_window
+        self.unexpected_shows: list[str] = []
+        self.deactivated = False
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if isinstance(watched, QWidget) and watched.isWindow():
+            if event.type() == QEvent.Type.Show and watched is not self._main_window:
+                self.unexpected_shows.append(type(watched).__name__)
+            elif event.type() == QEvent.Type.WindowDeactivate and watched is self._main_window:
+                self.deactivated = True
+        return False
+
+
+def test_switching_tabs_1_2_3_1_spawns_no_windows_and_keeps_focus(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    app = QApplication.instance()
+    assert app is not None
+    spy = _UnexpectedWindowSpy(window)
+    app.installEventFilter(spy)
+    try:
+        service.add_task_from_input("Check tab switching @Maya")
+        window.refresh_views()
+        QApplication.processEvents()
+        spy.unexpected_shows.clear()
+        spy.deactivated = False
+
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        QApplication.processEvents()
+        for key in (Qt.Key.Key_1, Qt.Key.Key_2, Qt.Key.Key_3, Qt.Key.Key_1):
+            focused = QApplication.focusWidget() or window
+            QTest.keyClick(focused, key)
+            QApplication.processEvents()
+
+        assert spy.unexpected_shows == []
+        assert not spy.deactivated
+        assert window.current_tab() == ViewTab.ACTIVE
+        assert window.task_scroll.hasFocus()
+    finally:
+        app.removeEventFilter(spy)
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_hotkey_event_filter_handles_windows_generic_msg_and_toggles_spotlight(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Win32 native WM_HOTKEY test only runs on Windows")
+
+    platform = FakePlatform()
+    runtime = build_application(db_path=tmp_path / "hotkey.db", platform=platform)
+    qtbot.addWidget(runtime.window)
+    try:
+        runtime.window.hide_to_tray()
+        assert not runtime.window.isVisible()
+
+        msg = wintypes.MSG()
+        msg.message = WM_HOTKEY
+        msg.wParam = 1
+
+        handled = runtime.hotkey_filter.nativeEventFilter(
+            QByteArray(b"windows_generic_MSG"),
+            ctypes.addressof(msg),
+        )
+        QApplication.processEvents()
+
+        assert handled == (True, 0)
+        assert runtime.window.isVisible()
+        assert runtime.window.is_compact()
+    finally:
+        runtime.window.tick_timer.stop()
+        runtime.tray.hide()
+        runtime.repository.close()
+
+
+def test_notes_editor_tab_and_ctrl_tab_navigate_out_of_notes(qtbot: QtBot, tmp_path: Path) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        task = service.add_task_from_input("Focus navigation check")
+        assert task is not None
+        window.refresh_views()
+
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_Return)
+        ts = find_thinking_space(window)
+
+        ts.notes_editor.setFocus()
+        QApplication.processEvents()
+        assert ts.notes_editor.hasFocus()
+
+        # Plain Tab moves focus out of NotesEditor instead of inserting '\t'
+        QTest.keyClick(ts.notes_editor, Qt.Key.Key_Tab)
+        QApplication.processEvents()
+        assert not ts.notes_editor.hasFocus()
+        assert ts.notes_editor.toPlainText() == ""
+
+        # Shift+Tab moves back into NotesEditor, and Ctrl+Tab moves back out
+        focused = QApplication.focusWidget()
+        assert focused is not None
+        QTest.keyClick(focused, Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier)
+        QApplication.processEvents()
+        assert ts.notes_editor.hasFocus()
+
+        QTest.keyClick(ts.notes_editor, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
+        QApplication.processEvents()
+        assert not ts.notes_editor.hasFocus()
+
+        # Ctrl+Shift+Tab moves backward into NotesEditor, then out to requester_edit
+        focused = QApplication.focusWidget()
+        assert focused is not None
+        QTest.keyClick(
+            focused,
+            Qt.Key.Key_Backtab,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+        QApplication.processEvents()
+        assert ts.notes_editor.hasFocus()
+
+        QTest.keyClick(
+            ts.notes_editor,
+            Qt.Key.Key_Backtab,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+        QApplication.processEvents()
+        assert ts.requester_edit.hasFocus()
+    finally:
+        window.tick_timer.stop()
+        window.focus_loss_timer.stop()
+        repo.close()
+
+
+def test_auto_hide_on_focus_loss_respects_delay_activation_and_off_setting(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        # Default delay is 3 seconds
+        assert service.get_settings().auto_hide_delay == AutoHideDelay.THREE_SEC
+
+        # Deactivate -> starts 3000ms focus-loss timer; re-activate cancels it
+        QApplication.sendEvent(window, QEvent(QEvent.Type.WindowDeactivate))
+        assert window.focus_loss_timer.isActive()
+        assert window.focus_loss_timer.interval() == 3000
+
+        QApplication.sendEvent(window, QEvent(QEvent.Type.WindowActivate))
+        assert not window.focus_loss_timer.isActive()
+        assert window.isVisible()
+
+        # When set to OFF, losing focus does not start the timer
+        off_settings = service.update_settings(
+            Settings(auto_hide_delay=AutoHideDelay.OFF),
+        )
+        window.apply_settings(off_settings)
+        QApplication.sendEvent(window, QEvent(QEvent.Type.WindowDeactivate))
+        assert not window.focus_loss_timer.isActive()
+        assert window.isVisible()
+
+        # When set to IMMEDIATE (0s), losing focus hides window after event-loop tick
+        imm_settings = service.update_settings(
+            Settings(auto_hide_delay=AutoHideDelay.IMMEDIATE),
+        )
+        window.apply_settings(imm_settings)
+        other_window = QWidget()
+        qtbot.addWidget(other_window)
+        other_window.show()
+        other_window.activateWindow()
+        QApplication.sendEvent(window, QEvent(QEvent.Type.WindowDeactivate))
+        qtbot.waitUntil(lambda: not window.isVisible())
+    finally:
+        window.tick_timer.stop()
+        window.focus_loss_timer.stop()
+        repo.close()
+
+
+def test_task_row_and_thinking_space_creation_dates(qtbot: QtBot, tmp_path: Path) -> None:
+    window, service, clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        # Prior year task
+        clock.current = datetime(2025, 11, 24, 14, 5, tzinfo=UTC)
+        t_prior = service.add_task_from_input("Legacy migration")
+        # Same year older task
+        clock.current = datetime(2026, 11, 10, 9, 30, tzinfo=UTC)
+        t_older = service.add_task_from_input("Earlier Nov task")
+        # Yesterday
+        clock.current = datetime(2026, 11, 25, 11, 15, tzinfo=UTC)
+        t_yesterday = service.add_task_from_input("Yesterday task")
+        # Today (2026-11-26)
+        clock.current = datetime(2026, 11, 26, 18, 12, tzinfo=UTC)
+        t_today = service.add_task_from_input("Today task @Maya")
+        assert (
+            t_prior is not None
+            and t_older is not None
+            and t_yesterday is not None
+            and t_today is not None
+        )
+
+        window.refresh_views()
+
+        row_today = find_task_row(window, t_today.id)
+        row_yesterday = find_task_row(window, t_yesterday.id)
+        row_older = find_task_row(window, t_older.id)
+        row_prior = find_task_row(window, t_prior.id)
+
+        assert row_today.date_pill.text() == "Today"
+        assert row_today.date_pill.toolTip() == "Added Thu, Nov 26, 2026 · 18:12"
+        assert row_yesterday.date_pill.text() == "Yesterday"
+        assert row_older.date_pill.text() == "Nov 10"
+        assert row_prior.date_pill.text() == "Nov 24 '25"
+
+        # Expand Today task -> Thinking Space shows Added Thu, Nov 26 · 18:12
+        window._expand_task(t_today.id)
+        ts_today = find_thinking_space(window)
+        assert ts_today.added_meta_label.text() == "Added Thu, Nov 26 · 18:12"
+
+        # Expand prior year task -> includes year
+        window._expand_task(t_prior.id)
+        ts_prior = find_thinking_space(window)
+        assert ts_prior.added_meta_label.text() == "Added Mon, Nov 24, 2025 · 14:05"
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_filter_and_sort_popover_sorting_filtering_and_manual_guard(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        # Last week: Wed Nov 18
+        clock.current = datetime(2026, 11, 18, 10, 0, tzinfo=UTC)
+        t_old_doing = service.add_task_from_input("Old doing task")
+        t_wait_old = service.add_task_from_input("Waiting last week")
+        # This week: Tue Nov 24
+        clock.current = datetime(2026, 11, 24, 10, 0, tzinfo=UTC)
+        t_week = service.add_task_from_input("Mid week task")
+        # Today: Thu Nov 26
+        clock.current = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
+        t_today = service.add_task_from_input("Fresh today task")
+        t_wait_today = service.add_task_from_input("Waiting today")
+        assert (
+            t_old_doing is not None
+            and t_wait_old is not None
+            and t_week is not None
+            and t_today is not None
+            and t_wait_today is not None
+        )
+        service.set_status(t_old_doing.id, TaskStatus.DOING)
+        service.set_status(t_wait_old.id, TaskStatus.WAITING)
+        service.set_status(t_wait_today.id, TaskStatus.WAITING)
+        window.refresh_views()
+
+        # Open Filter & Sort popover
+        window.filter_sort_btn.click()
+        assert window.filter_popover.isVisible()
+
+        # Select Newest sort -> Doing pinned on top, Todo newest first
+        newest_btn = next(
+            b
+            for b in window.filter_popover.findChildren(QPushButton, "SettingsSegmentOption")
+            if b.text() == "Newest"
+        )
+        newest_btn.click()
+        assert window.displayed_task_ids() == [t_old_doing.id, t_today.id, t_week.id]
+        assert window.filter_sort_btn.property("active") is True
+
+        # Alt+Down manual reorder is disabled while sort_mode != MANUAL
+        window._focus_task_list()
+        window._select_task(t_today.id)
+        before_order = [t.id for t in service.list_tasks(TaskStatus.TODO)]
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+        assert [t.id for t in service.list_tasks(TaskStatus.TODO)] == before_order
+
+        # Filter by Last Week -> applies across Active & Waiting
+        last_week_chip = next(
+            b
+            for b in window.filter_popover.findChildren(QPushButton, "FilterChipButton")
+            if b.text() == "Last Week"
+        )
+        last_week_chip.click()
+        assert window.displayed_task_ids() == [t_old_doing.id]
+
+        window.switch_tab(ViewTab.WAITING)
+        assert window.displayed_task_ids() == [t_wait_old.id]
+
+        # Re-open popover, select Custom range Nov 24..Nov 26
+        window.filter_sort_btn.click()
+        assert window.filter_popover.isVisible()
+        custom_chip = next(
+            b
+            for b in window.filter_popover.findChildren(QPushButton, "FilterChipButton")
+            if b.text() == "Custom"
+        )
+        custom_chip.click()
+        assert window.filter_popover.custom_row.isVisible()
+
+        from datetime import date as pydate
+
+        from nyatodo.ui.filter_popover import _to_qdate
+
+        window.filter_popover.from_date_edit.setDate(_to_qdate(pydate(2026, 11, 24)))
+        window.filter_popover.to_date_edit.setDate(_to_qdate(pydate(2026, 11, 26)))
+        assert window.displayed_task_ids() == [t_wait_today.id]
+
+        # Esc closes popover without hiding MainWindow
+        QTest.keyClick(window.filter_popover, Qt.Key.Key_Escape)
+        qtbot.waitUntil(lambda: not window.filter_popover.isVisible())
+        assert window.isVisible()
+
+        # Reset restores Manual + Any
+        window.filter_sort_btn.click()
+        window.filter_popover.reset_button.click()
+        assert window._sort_mode == TaskSortMode.MANUAL
+        assert window._date_filter.mode == TaskDateFilterMode.ANY
+        assert window.filter_sort_btn.property("active") is False
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_activity_summary_period_modal_work_week_custom_and_daily_strip(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        # Seed sessions across Mon Nov 23 and Thu Nov 26 (today)
+        clock.current = datetime(2026, 11, 23, 9, 0, tzinfo=UTC)
+        t_mon = service.add_task_from_input("Monday planning @Maya")
+        assert t_mon is not None
+        service.toggle_timer(t_mon.id)
+        clock.advance(minutes=45)
+        service.toggle_timer(t_mon.id)
+
+        clock.current = datetime(2026, 11, 26, 14, 0, tzinfo=UTC)
+        t_thu = service.add_task_from_input("Thursday build")
+        assert t_thu is not None
+        service.toggle_timer(t_thu.id)
+        clock.advance(minutes=30)  # 14:30, still running!
+
+        window.switch_tab(ViewTab.SUMMARY)
+        assert window.summary_view.period_button.text() == "Today · Thu, Nov 26"
+        assert not window.summary_view.daily_strip_frame.isVisible()
+        assert window.summary_view.wall_clock_value.text() == "00:30:00"
+
+        # Open Summary Period Modal via period_button
+        window.summary_view.period_button.click()
+        assert window.summary_period_modal.isVisible()
+        assert window.summary_period_modal.graphicsEffect() is None
+
+        # Quick preset "This Week" -> closes modal, shows 7-day strip, aggregates Mon+Thu (75m)
+        this_week_btn = window.summary_period_modal.preset_buttons["This Week"]
+        this_week_btn.click()
+        qtbot.waitUntil(lambda: not window.summary_period_modal.isVisible())
+        assert window.summary_view.period_button.text() == "This Week · Nov 23\u201329"
+        assert window.summary_view.daily_strip_frame.isVisible()
+        strip_buttons = window.summary_view.daily_strip_frame.findChildren(
+            QPushButton, "DailyStripDay"
+        )
+        assert len(strip_buttons) == 7
+        assert window.summary_view.wall_clock_value.text() == "01:15:00"
+        assert not window.summary_view.next_period_button.isEnabled()
+
+        # Live 1s tick refreshes Work Week summary because today (Nov 26) is inside Nov 23..29
+        clock.advance(seconds=15)
+        window.on_tick()
+        assert window.summary_view.wall_clock_value.text() == "01:15:15"
+
+        # Step back to Last Week -> empty, live tick does not overwrite Last Week
+        window.summary_view.prev_period_button.click()
+        assert window.summary_view.period_button.text() == "Last Week · Nov 16\u201322"
+        assert window.summary_view.wall_clock_value.text() == "00:00:00"
+        clock.advance(seconds=10)
+        window.on_tick()
+        assert window.summary_view.period_button.text() == "Last Week · Nov 16\u201322"
+
+        # Open modal and apply Custom 3-day range Nov 23..Nov 25 -> 3-day strip
+        window.summary_view.period_button.click()
+        assert window.summary_period_modal.isVisible()
+        custom_mode_btn = next(
+            b
+            for b in window.summary_period_modal.findChildren(QPushButton, "SettingsSegmentOption")
+            if b.text() == "Custom"
+        )
+        custom_mode_btn.click()
+        from datetime import date as pydate
+
+        from nyatodo.ui.summary_period_modal import _to_qdate as modal_qdate
+
+        window.summary_period_modal.from_date_edit.setDate(modal_qdate(pydate(2026, 11, 23)))
+        window.summary_period_modal.to_date_edit.setDate(modal_qdate(pydate(2026, 11, 25)))
+        window.summary_period_modal.apply_button.click()
+        qtbot.waitUntil(lambda: not window.summary_period_modal.isVisible())
+
+        assert window.summary_view.period_button.text() == "Nov 23 \u2013 Nov 25"
+        assert window.summary_view.wall_clock_value.text() == "00:45:00"
+        strip_buttons = window.summary_view.daily_strip_frame.findChildren(
+            QPushButton, "DailyStripDay"
+        )
+        assert len(strip_buttons) == 3
+
+        # Click Monday Nov 23 in daily strip -> drills down into Day mode for Nov 23
+        mon_btn = next(b for b in strip_buttons if b.property("day_iso") == "2026-11-23")
+        mon_btn.click()
+        assert window.summary_view.current_period() == SummaryPeriod.day(pydate(2026, 11, 23))
+        assert not window.summary_view.daily_strip_frame.isVisible()
+        assert window.summary_view.wall_clock_value.text() == "00:45:00"
+
+        # Esc closes Summary Period Modal without hiding MainWindow
+        window.summary_view.period_button.click()
+        assert window.summary_period_modal.isVisible()
+        QTest.keyClick(window.summary_period_modal, Qt.Key.Key_Escape)
+        qtbot.waitUntil(lambda: not window.summary_period_modal.isVisible())
+        assert window.isVisible()
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_task_list_direct_edit_shortcuts_n_s_r_e_and_compact_hints(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        task = service.add_task_from_input("Initial title @Maya")
+        assert task is not None
+        service.update_notes(task.id, "Start")
+        window.refresh_views()
+
+        # Focus Task List and verify compact TASK_LIST hints
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        assert window.task_scroll.hasFocus()
+        assert window.hints_footer.context() == HintContext.TASK_LIST
+        keycaps = [lbl.text() for lbl in window.hints_footer.findChildren(QLabel, "KeycapLabel")]
+        verbs = [lbl.text() for lbl in window.hints_footer.findChildren(QLabel, "HintVerbLabel")]
+        assert list(zip(keycaps, verbs, strict=True)) == [
+            ("↓↑", "Move"),
+            ("t", "Timer"),
+            ("n/s/r/e", "Edit"),
+            ("w", "Wait"),
+            ("d", "Done"),
+            ("Esc", "Hide"),
+        ]
+
+        # 1. 'n' focuses notes_editor at end; Enter adds newline, Esc saves & collapses
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_N)
+        assert window.expanded_task_id() == task.id
+        assert window.hints_footer.context() == HintContext.THINKING_SPACE
+        ts = find_thinking_space(window)
+        assert ts.notes_editor.hasFocus()
+        assert ts.notes_editor.textCursor().position() == len("Start")
+
+        QTest.keyClicks(ts.notes_editor, " more")
+        QTest.keyClick(ts.notes_editor, Qt.Key.Key_Return)
+        assert window.expanded_task_id() == task.id
+        QTest.keyClicks(ts.notes_editor, "Next line")
+        QTest.keyClick(ts.notes_editor, Qt.Key.Key_Escape)
+        qtbot.waitUntil(lambda: window.findChild(ThinkingSpaceWidget, "ThinkingSpace") is None)
+        assert window.expanded_task_id() is None
+        assert window.task_scroll.hasFocus()
+        assert window.hints_footer.context() == HintContext.TASK_LIST
+        reloaded = service.get_task(task.id)
+        assert reloaded is not None and reloaded.notes == "Start more\nNext line"
+
+        # 2. 's' expands, focuses add_sub_step_input; Enter adds Sub-step and keeps focus for next
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_S)
+        assert window.expanded_task_id() == task.id
+        assert window.hints_footer.context() == HintContext.THINKING_SPACE
+        ts = find_thinking_space(window)
+        assert ts.add_sub_step_input.hasFocus()
+
+        QTest.keyClicks(ts.add_sub_step_input, "First step")
+        QTest.keyClick(ts.add_sub_step_input, Qt.Key.Key_Return)
+        ts = find_thinking_space(window)
+        assert ts.add_sub_step_input.hasFocus()
+        QTest.keyClicks(ts.add_sub_step_input, "Second step")
+        QTest.keyClick(ts.add_sub_step_input, Qt.Key.Key_Return)
+
+        reloaded = service.get_task(task.id)
+        assert reloaded is not None
+        assert [step.title for step in reloaded.sub_steps] == ["First step", "Second step"]
+        ts = find_thinking_space(window)
+        assert ts.add_sub_step_input.hasFocus()
+        QTest.keyClick(ts.add_sub_step_input, Qt.Key.Key_Escape)
+        qtbot.waitUntil(lambda: window.findChild(ThinkingSpaceWidget, "ThinkingSpace") is None)
+        assert window.task_scroll.hasFocus()
+
+        # 3. 'r' expands, focuses requester_edit with text selected; Enter saves & collapses
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_R)
+        assert window.expanded_task_id() == task.id
+        assert window.hints_footer.context() == HintContext.THINKING_SPACE
+        ts = find_thinking_space(window)
+        assert ts.requester_edit.hasFocus()
+        assert ts.requester_edit.selectedText() == "@Maya"
+
+        QTest.keyClicks(ts.requester_edit, "Alex")
+        QTest.keyClick(ts.requester_edit, Qt.Key.Key_Return)
+        qtbot.waitUntil(lambda: window.findChild(ThinkingSpaceWidget, "ThinkingSpace") is None)
+        assert window.expanded_task_id() is None
+        assert window.task_scroll.hasFocus()
+        assert window.hints_footer.context() == HintContext.TASK_LIST
+        reloaded = service.get_task(task.id)
+        assert reloaded is not None and reloaded.requester == "Alex"
+
+        # 4. 'e' expands, focuses title_edit with text selected; Enter saves & collapses
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_E)
+        assert window.expanded_task_id() == task.id
+        assert window.hints_footer.context() == HintContext.THINKING_SPACE
+        ts = find_thinking_space(window)
+        assert ts.title_edit.hasFocus()
+        assert ts.title_edit.selectedText() == "Initial title"
+
+        QTest.keyClicks(ts.title_edit, "Updated title")
+        QTest.keyClick(ts.title_edit, Qt.Key.Key_Return)
+        qtbot.waitUntil(lambda: window.findChild(ThinkingSpaceWidget, "ThinkingSpace") is None)
+        assert window.expanded_task_id() is None
+        assert window.task_scroll.hasFocus()
+        reloaded = service.get_task(task.id)
+        assert reloaded is not None and reloaded.title == "Updated title"
+
+        # 5. When Thinking Space is already expanded (focus in task_scroll), n/s/r/e jump directly
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_Return)
+        assert window.expanded_task_id() == task.id
+        assert window.task_scroll.hasFocus()
+
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_N)
+        assert window.expanded_task_id() == task.id
+        assert find_thinking_space(window).notes_editor.hasFocus()
+
+        window.task_scroll.setFocus()
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_S)
+        assert window.expanded_task_id() == task.id
+        assert find_thinking_space(window).add_sub_step_input.hasFocus()
+
+        window.task_scroll.setFocus()
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_R)
+        assert window.expanded_task_id() == task.id
+        ts = find_thinking_space(window)
+        assert ts.requester_edit.hasFocus()
+        assert ts.requester_edit.selectedText() == "@Alex"
+
+        window.task_scroll.setFocus()
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_E)
+        assert window.expanded_task_id() == task.id
+        ts = find_thinking_space(window)
+        assert ts.title_edit.hasFocus()
+        assert ts.title_edit.selectedText() == "Updated title"
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_direct_edit_shortcut_scrolls_bottom_task_field_into_view(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        tasks = [service.add_task_from_input(f"Task #{i}") for i in range(14)]
+        last_task = tasks[-1]
+        assert last_task is not None
+        window.refresh_views()
+
+        QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Down)
+        for _ in range(len(tasks) - 1):
+            QTest.keyClick(window.task_scroll, Qt.Key.Key_Down)
+        assert window.selected_task_id() == last_task.id
+
+        # Press 's' on bottom-most Task -> expand animates and scrolls add_sub_step_input into view
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_S)
+        ts = find_thinking_space(window)
+        assert ts.add_sub_step_input.hasFocus()
+        qtbot.waitUntil(lambda: ts.maximumHeight() > 1000)
+        QApplication.processEvents()
+
+        viewport = window.task_scroll.viewport()
+        top_left = ts.add_sub_step_input.mapTo(viewport, QPoint(0, 0))
+        bottom_y = top_left.y() + ts.add_sub_step_input.height()
+        assert top_left.y() >= 0
+        assert bottom_y <= viewport.height()
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_filter_and_sort_mouse_click_reveals_non_zero_popover(qtbot: QtBot, tmp_path: Path) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        t1 = service.add_task_from_input("Older task")
+        t2 = service.add_task_from_input("Newer task")
+        assert t1 is not None and t2 is not None
+        window.refresh_views()
+
+        QTest.mouseClick(
+            window.filter_sort_btn,
+            Qt.MouseButton.LeftButton,
+            pos=window.filter_sort_btn.rect().center(),
+        )
+        qtbot.waitUntil(
+            lambda: window.filter_popover.isVisible() and window.filter_popover.height() >= 120
+        )
+
+        newest_btn = next(
+            b
+            for b in window.filter_popover.findChildren(QPushButton, "SettingsSegmentOption")
+            if b.text() == "Newest"
+        )
+        QTest.mouseClick(newest_btn, Qt.MouseButton.LeftButton, pos=newest_btn.rect().center())
+        assert window._sort_mode == TaskSortMode.NEWEST
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_requester_pills_handle_more_than_three_people_and_long_names(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, _service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        # 1. Four short names fit inline without dropping the 4th person
+        for idx, name in enumerate(("Al", "Bo", "Ed", "Jo")):
+            QTest.keyClicks(window.quick_bar.input_edit, f"Short {idx} @{name}")
+            QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Return)
+
+        inline_names = [
+            btn.property("requester_name") or btn.text().lstrip("@")
+            for btn in window.findChildren(QPushButton, "RequesterFilterPill")
+        ]
+        overflow_btn = window.findChild(QPushButton, "RequesterOverflowButton")
+        assert set(inline_names) == {"Al", "Bo", "Ed", "Jo"} or (
+            overflow_btn is not None and overflow_btn.isVisible()
+        )
+
+        # 2. Add long-named people so >3 and overflow definitely occur
+        for idx, name in enumerate(
+            (
+                "ChristopherAlexander",
+                "JonathanMaximilian",
+                "ElizabethMontgomery",
+                "KatherineBell",
+            )
+        ):
+            QTest.keyClicks(window.quick_bar.input_edit, f"Long {idx} @{name}")
+            QTest.keyClick(window.quick_bar.input_edit, Qt.Key.Key_Return)
+
+        QApplication.processEvents()
+        # Filter & Sort and Summary buttons remain cleanly inside tabs_frame at both 540px and 460px
+        for width in (540, 460):
+            window.resize(width, 640)
+            QApplication.processEvents()
+            tabs_rect = window.tabs_frame.rect()
+            assert tabs_rect.contains(window.filter_sort_btn.geometry())
+            assert tabs_rect.contains(window.summary_tab_btn.geometry())
+            assert window.requester_pills_host.geometry().right() < window.filter_sort_btn.x()
+
+        # Overflow button is visible and lets the user select a 4th+ person (@KatherineBell)
+        overflow_btn = window.findChild(QPushButton, "RequesterOverflowButton")
+        assert overflow_btn is not None and overflow_btn.isVisible()
+        QTest.mouseClick(
+            overflow_btn,
+            Qt.MouseButton.LeftButton,
+            pos=overflow_btn.rect().center(),
+        )
+        popover = window.findChild(QWidget, "RequesterPopover")
+        assert popover is not None
+        qtbot.waitUntil(lambda: popover.isVisible() and popover.height() >= 60)
+
+        katherine_item = next(
+            b
+            for b in popover.findChildren(QPushButton, "RequesterPopoverItem")
+            if b.property("requester_name") == "KatherineBell"
+        )
+        QTest.mouseClick(
+            katherine_item,
+            Qt.MouseButton.LeftButton,
+            pos=katherine_item.rect().center(),
+        )
+        QApplication.processEvents()
+        assert len(window.displayed_task_ids()) == 1
+        assert window.requester_filter() == "KatherineBell"
+
+        # Active overflow requester is visible in the bar and clicking it clears the filter
+        active_pill = next(
+            b
+            for b in window.findChildren(QPushButton, "RequesterFilterPill")
+            if b.property("requester_name") == "KatherineBell"
+        )
+        assert active_pill.property("active") is True
+        QTest.mouseClick(active_pill, Qt.MouseButton.LeftButton, pos=active_pill.rect().center())
+        assert window.requester_filter() is None
+        assert len(window.displayed_task_ids()) == 8
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def test_requester_pills_pack_inline_on_initial_cold_start_show(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    clock = FakeClock(datetime(2026, 11, 26, 19, 40, tzinfo=UTC))
+    platform = FakePlatform()
+    repo = SQLiteRepository(tmp_path / "cold_start.db")
+    service = TodoService(repo, clock=clock, platform=platform, local_tz=UTC)
+    for idx, name in enumerate(("adrian", "kamila", "kutasinski", "gowniak", "dkasodkasdp")):
+        service.add_task_from_input(f"Task {idx} @{name}")
+
+    window = MainWindow(service, clock=clock)
+    qtbot.addWidget(window)
+    try:
+        window.show_and_focus()
+        QApplication.processEvents()
+
+        inline_names = [
+            btn.property("requester_name")
+            for btn in window.findChildren(QPushButton, "RequesterFilterPill")
+        ]
+        overflow_btn = window.findChild(QPushButton, "RequesterOverflowButton")
+        assert inline_names[:2] == ["adrian", "kamila"]
+        assert overflow_btn is not None and overflow_btn.text() == "+3"
+    finally:
+        window.tick_timer.stop()
+        repo.close()

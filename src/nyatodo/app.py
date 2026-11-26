@@ -98,6 +98,7 @@ def build_application(
 
     def _on_about_to_quit() -> None:
         window.tick_timer.stop()
+        window.focus_loss_timer.stop()
         window.flush_pending_saves()
         service.shutdown(hotkey_id=DEFAULT_HOTKEY_ID, hwnd=0)
         tray.hide()

@@ -36,6 +36,10 @@ _Avoid_: Focus lock, Pomodoro clock
 A recorded duration of work—captured live by a **Task Timer** or entered manually—belonging to a **Task**.
 _Avoid_: Timesheet, billable entry, Pomodoro
 
-**Daily Summary**:
-A local chronological view of **Work Sessions** and completed **Tasks** grouped by calendar day for personal review.
-_Avoid_: Standup report, export, timesheet
+**Activity Summary**:
+A local chronological view of **Work Sessions** and completed **Tasks** aggregated over a calendar day, **Work Week**, or custom date range for personal review.
+_Avoid_: Daily Summary, statistics, standup report, export, timesheet
+
+**Work Week**:
+A seven-day calendar period running from Monday through Sunday used to group and review **Activity Summary** metrics.
+_Avoid_: Business week, Monday-to-Friday week

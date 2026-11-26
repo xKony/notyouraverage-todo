@@ -1,7 +1,9 @@
 """Expandable Thinking Space accordion for Title, Requester, Notes, Sub-steps, and Work Sessions."""
 
 from collections.abc import Callable
-from datetime import datetime
+from dataclasses import replace
+from datetime import datetime, tzinfo
+from enum import StrEnum
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -14,7 +16,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QEnterEvent, QFont, QKeyEvent, QPainter, QPen
+from PySide6.QtGui import QColor, QEnterEvent, QFont, QKeyEvent, QPainter, QPen, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractButton,
     QFrame,
@@ -31,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nyatodo.domain import SubStep, Task, TaskStatus, WorkSession
+from nyatodo.domain import SubStep, Task, TaskStatus, WorkSession, format_task_added_full
 from nyatodo.ui.icons import create_close_icon, create_play_icon, create_stop_icon
 from nyatodo.ui.qt_helpers import clear_layout, set_qss_property
 from nyatodo.ui.theme import (
@@ -40,6 +42,15 @@ from nyatodo.ui.theme import (
     format_hms,
     make_ui_font,
 )
+
+
+class ThinkingField(StrEnum):
+    """Directly focusable fields inside a Thinking Space."""
+
+    TITLE = "title"
+    REQUESTER = "requester"
+    NOTES = "notes"
+    SUB_STEP = "sub_step"
 
 
 def _format_session_duration_short(seconds: int) -> str:
@@ -76,7 +87,7 @@ class _SubStepCheckBox(QAbstractButton):
         if self.isChecked():
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(self._tokens.accent_primary))
-            painter.drawRoundedRect(box, 4.0, 4.0)
+            painter.drawRoundedRect(box, 7.0, 7.0)
             pen = QPen(QColor("#FFFFFF"), 1.6)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -84,9 +95,9 @@ class _SubStepCheckBox(QAbstractButton):
             painter.drawLine(4, 8, 7, 11)
             painter.drawLine(7, 11, 12, 5)
         else:
-            painter.setPen(QPen(QColor(self._tokens.border_subtle), 1.2))
+            painter.setPen(QPen(QColor(self._tokens.border_subtle), 1.3))
             painter.setBrush(QColor(self._tokens.bg_window))
-            painter.drawRoundedRect(box, 4.0, 4.0)
+            painter.drawRoundedRect(box, 7.0, 7.0)
         painter.end()
 
 
@@ -166,6 +177,7 @@ class _SubStepRowWidget(_HoverDeleteRow):
             self.title_edit.setText(self._step.title)
             return
         if text != self._step.title:
+            self._step = replace(self._step, title=text)
             self.renamed.emit(self._step.id, text)
 
 
@@ -199,7 +211,7 @@ class _WorkSessionRowWidget(_HoverDeleteRow):
 
         self.delete_button = QToolButton(self)
         self.delete_button.setObjectName("RowDeleteButton")
-        self.delete_button.setFixedSize(18, 18)
+        self.delete_button.setFixedSize(20, 20)
         self.delete_button.setIcon(create_close_icon(QColor(tokens.text_muted), 10))
         self.delete_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -224,6 +236,8 @@ class ThinkingSpaceWidget(QFrame):
     manual_session_requested = Signal(str, str)
     session_deleted = Signal(str)
     collapse_requested = Signal()
+    expand_finished = Signal()
+    editor_focus_changed = Signal()
 
     def __init__(
         self,
@@ -231,6 +245,7 @@ class ThinkingSpaceWidget(QFrame):
         *,
         now: datetime,
         tokens: ColorTokens = DARK_TOKENS,
+        local_tz: tzinfo | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -239,6 +254,7 @@ class ThinkingSpaceWidget(QFrame):
         self._task = task
         self._now = now
         self._tokens = tokens
+        self._local_tz = local_tz
         self._loading = False
         self._notes_dirty = False
         self._collapsing = False
@@ -267,7 +283,7 @@ class ThinkingSpaceWidget(QFrame):
         self._build_sessions_section(self._root_layout)
         self._install_editor_filters()
 
-        self.update_task(task, now=now, tokens=tokens)
+        self.update_task(task, now=now, tokens=tokens, local_tz=local_tz)
 
     def _build_header_section(self, root: QVBoxLayout) -> None:
         self.title_edit = QLineEdit(self)
@@ -277,6 +293,11 @@ class ThinkingSpaceWidget(QFrame):
         self.title_edit.setPlaceholderText("Task title")
         self.title_edit.editingFinished.connect(self._commit_title)
         root.addWidget(self.title_edit)
+
+        self.added_meta_label = QLabel(self)
+        self.added_meta_label.setObjectName("ThinkingAddedLabel")
+        self.added_meta_label.setFont(make_ui_font(11))
+        root.addWidget(self.added_meta_label)
 
         controls_row = QHBoxLayout()
         controls_row.setContentsMargins(0, 0, 0, 0)
@@ -337,6 +358,7 @@ class ThinkingSpaceWidget(QFrame):
         self.notes_editor.setFont(make_ui_font(13))
         self.notes_editor.setPlaceholderText("Capture context, links, or rough thoughts...")
         self.notes_editor.setFixedHeight(54)
+        self.notes_editor.setTabChangesFocus(True)
         self.notes_editor.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.notes_editor.textChanged.connect(self._on_notes_text_changed)
         root.addWidget(self.notes_editor)
@@ -424,6 +446,7 @@ class ThinkingSpaceWidget(QFrame):
         self.sessions_scroll = QScrollArea(self)
         self.sessions_scroll.setObjectName("SessionListScroll")
         self.sessions_scroll.setWidgetResizable(True)
+        self.sessions_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.sessions_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.sessions_scroll.setMaximumHeight(96)
         self.sessions_container = QWidget()
@@ -452,7 +475,37 @@ class ThinkingSpaceWidget(QFrame):
     def has_editor_focus(self) -> bool:
         """Return True if any input widget inside this Thinking Space holds focus."""
         focus_widget = self.window().focusWidget()
-        return focus_widget is not None and self.isAncestorOf(focus_widget)
+        if focus_widget is not None and self.isAncestorOf(focus_widget):
+            return True
+        return any(
+            editor.hasFocus()
+            for editor in (
+                self.title_edit,
+                self.requester_edit,
+                self.notes_editor,
+                self.add_sub_step_input,
+                self.manual_duration_input,
+            )
+        )
+
+    def focus_field(self, field: ThinkingField) -> QWidget:
+        """Focus a specific Thinking Space input with appropriate selection or cursor placement."""
+        if field == ThinkingField.TITLE:
+            self.title_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            self.title_edit.selectAll()
+            return self.title_edit
+        if field == ThinkingField.REQUESTER:
+            self.requester_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            self.requester_edit.selectAll()
+            return self.requester_edit
+        if field == ThinkingField.NOTES:
+            self.notes_editor.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            cursor = self.notes_editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.notes_editor.setTextCursor(cursor)
+            return self.notes_editor
+        self.add_sub_step_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        return self.add_sub_step_input
 
     def open_manual_entry(self) -> None:
         """Reveal and focus the inline manual Work Session input."""
@@ -514,16 +567,28 @@ class ThinkingSpaceWidget(QFrame):
             del_btn.setIcon(create_close_icon(QColor(tokens.text_muted), 10))
         self.refresh_timer(now=self._now)
 
-    def update_task(self, task: Task, *, now: datetime, tokens: ColorTokens) -> None:
+    def update_task(
+        self,
+        task: Task,
+        *,
+        now: datetime,
+        tokens: ColorTokens,
+        local_tz: tzinfo | None = None,
+    ) -> None:
         """Synchronize all Thinking Space widgets to the latest Task snapshot."""
         self._loading = True
         try:
             self._task = task
             self._now = now
             self._tokens = tokens
+            if local_tz is not None:
+                self._local_tz = local_tz
 
             if not self.title_edit.hasFocus():
                 self.title_edit.setText(task.title)
+            self.added_meta_label.setText(
+                format_task_added_full(task.created_at, now=now, tz=self._local_tz)
+            )
             if not self.requester_edit.hasFocus():
                 self.requester_edit.setText(f"@{task.requester}" if task.requester else "")
             if not self.notes_editor.hasFocus() and self.notes_editor.toPlainText() != task.notes:
@@ -571,7 +636,7 @@ class ThinkingSpaceWidget(QFrame):
                     None,
                 )
                 if session is not None and session.is_running:
-                    label.setText(self._format_session_line(session, now=now))
+                    label.setText(self._format_session_line(session, now=now, tz=self._local_tz))
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.KeyPress:
@@ -588,9 +653,40 @@ class ThinkingSpaceWidget(QFrame):
                 self.flush_pending_saves()
                 self.collapse_requested.emit()
                 return True
-        elif event.type() == QEvent.Type.FocusOut and watched is self.notes_editor:
-            self._notes_timer.stop()
-            self._flush_notes()
+            if (
+                watched in (self.title_edit, self.requester_edit)
+                and key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and not (
+                    key_event.modifiers()
+                    & (
+                        Qt.KeyboardModifier.ControlModifier
+                        | Qt.KeyboardModifier.AltModifier
+                        | Qt.KeyboardModifier.ShiftModifier
+                    )
+                )
+            ):
+                self.flush_pending_saves()
+                self.collapse_requested.emit()
+                return True
+            if key_event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) and (
+                key_event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            ):
+                if isinstance(watched, QWidget):
+                    backward = key_event.key() == Qt.Key.Key_Backtab or bool(
+                        key_event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                    )
+                    if backward:
+                        watched.focusPreviousChild()
+                    else:
+                        watched.focusNextChild()
+                return True
+        elif event.type() == QEvent.Type.FocusIn:
+            self.editor_focus_changed.emit()
+        elif event.type() == QEvent.Type.FocusOut:
+            if watched is self.notes_editor:
+                self._notes_timer.stop()
+                self._flush_notes()
+            self.editor_focus_changed.emit()
         return super().eventFilter(watched, event)
 
     def _on_height_anim_finished(self) -> None:
@@ -602,6 +698,7 @@ class ThinkingSpaceWidget(QFrame):
                 callback()
             return
         self.setMaximumHeight(16777215)
+        self.expand_finished.emit()
 
     def _make_divider(self) -> QFrame:
         line = QFrame(self)
@@ -617,6 +714,7 @@ class ThinkingSpaceWidget(QFrame):
             self.title_edit.setText(self._task.title)
             return
         if cleaned != self._task.title:
+            self._task = replace(self._task, title=cleaned)
             self.title_changed.emit(self._task.id, cleaned)
 
     def _commit_requester(self) -> None:
@@ -625,6 +723,7 @@ class ThinkingSpaceWidget(QFrame):
         raw = self.requester_edit.text().strip().lstrip("@")
         new_req: str | None = raw or None
         if new_req != self._task.requester:
+            self._task = replace(self._task, requester=new_req)
             self.requester_changed.emit(self._task.id, new_req)
 
     def _on_notes_text_changed(self) -> None:
@@ -690,7 +789,7 @@ class ThinkingSpaceWidget(QFrame):
         for session in ordered:
             row = _WorkSessionRowWidget(
                 session,
-                line_text=self._format_session_line(session, now=self._now),
+                line_text=self._format_session_line(session, now=self._now, tz=self._local_tz),
                 tokens=self._tokens,
                 parent=self.sessions_container,
             )
@@ -702,13 +801,22 @@ class ThinkingSpaceWidget(QFrame):
         self.sessions_scroll.setFixedHeight(visible_rows * 24 + 4)
 
     @staticmethod
-    def _format_session_line(session: WorkSession, *, now: datetime) -> str:
-        start_local = session.started_at.astimezone().strftime("%H:%M")
+    def _format_session_line(
+        session: WorkSession,
+        *,
+        now: datetime,
+        tz: tzinfo | None = None,
+    ) -> str:
+        start_local = (
+            session.started_at.astimezone(tz) if tz is not None else session.started_at.astimezone()
+        ).strftime("%H:%M")
         dur_secs = session.duration_seconds(now=now)
         if session.is_running:
             return f"{start_local} - now ({format_hms(dur_secs)}) · Timer"
         assert session.ended_at is not None
-        end_local = session.ended_at.astimezone().strftime("%H:%M")
+        end_local = (
+            session.ended_at.astimezone(tz) if tz is not None else session.ended_at.astimezone()
+        ).strftime("%H:%M")
         dur_label = _format_session_duration_short(dur_secs)
         kind = "Manual" if session.is_manual else "Timer"
         return f"{start_local} - {end_local} · {dur_label} · {kind}"

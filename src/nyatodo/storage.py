@@ -7,6 +7,7 @@ from pathlib import Path
 from types import TracebackType
 
 from nyatodo.domain import (
+    AutoHideDelay,
     IdleThreshold,
     Settings,
     SubStep,
@@ -16,7 +17,7 @@ from nyatodo.domain import (
     WorkSession,
 )
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 def _serialize_dt(dt: datetime | None) -> str | None:
@@ -119,10 +120,19 @@ class SQLiteRepository:
                     theme TEXT NOT NULL,
                     global_shortcut TEXT NOT NULL,
                     show_shortcut_hints INTEGER NOT NULL,
-                    idle_threshold_minutes INTEGER
+                    idle_threshold_minutes INTEGER,
+                    auto_hide_seconds INTEGER DEFAULT 3
                 );
                 """
             )
+            columns = {
+                str(col["name"])
+                for col in self._conn.execute("PRAGMA table_info(settings);").fetchall()
+            }
+            if "auto_hide_seconds" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE settings ADD COLUMN auto_hide_seconds INTEGER DEFAULT 3;"
+                )
             if self.schema_version() < _SCHEMA_VERSION:
                 self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION};")
 
@@ -296,6 +306,7 @@ class SQLiteRepository:
             global_shortcut=str(row["global_shortcut"]),
             show_shortcut_hints=bool(row["show_shortcut_hints"]),
             idle_threshold=IdleThreshold.from_minutes(row["idle_threshold_minutes"]),
+            auto_hide_delay=AutoHideDelay.from_seconds(row["auto_hide_seconds"]),
         )
 
     def save_settings(self, settings: Settings) -> Settings:
@@ -304,19 +315,22 @@ class SQLiteRepository:
             self._conn.execute(
                 """
                 INSERT INTO settings (
-                    id, theme, global_shortcut, show_shortcut_hints, idle_threshold_minutes
-                ) VALUES (1, ?, ?, ?, ?)
+                    id, theme, global_shortcut, show_shortcut_hints,
+                    idle_threshold_minutes, auto_hide_seconds
+                ) VALUES (1, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     theme = excluded.theme,
                     global_shortcut = excluded.global_shortcut,
                     show_shortcut_hints = excluded.show_shortcut_hints,
-                    idle_threshold_minutes = excluded.idle_threshold_minutes;
+                    idle_threshold_minutes = excluded.idle_threshold_minutes,
+                    auto_hide_seconds = excluded.auto_hide_seconds;
                 """,
                 (
                     settings.theme.value,
                     settings.global_shortcut,
                     int(settings.show_shortcut_hints),
                     settings.idle_threshold.minutes,
+                    settings.auto_hide_delay.seconds,
                 ),
             )
         return settings

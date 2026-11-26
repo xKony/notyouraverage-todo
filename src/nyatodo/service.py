@@ -1,4 +1,4 @@
-"""Application service layer orchestrating Tasks, Thinking Space, Timers, and Daily Summary."""
+"""Application service layer orchestrating Tasks, Thinking Space, Timers, and Activity Summary."""
 
 import uuid
 from collections.abc import Callable
@@ -7,13 +7,18 @@ from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from enum import Enum, auto
 
 from nyatodo.domain import (
-    DailySummary,
+    ActivitySummary,
+    DayBreakdown,
     IdleGap,
     Settings,
     SubStep,
+    SummaryPeriod,
+    SummaryPeriodKind,
     Task,
-    TaskDayBreakdown,
+    TaskDateFilter,
+    TaskSortMode,
     TaskStatus,
+    TaskSummaryBreakdown,
     ThemeMode,
     WorkSession,
     clip_session_interval,
@@ -60,6 +65,45 @@ class TodoService:
         self._pending_idle_started_at: datetime | None = None
         self._last_idle_seconds: float = 0.0
 
+    @property
+    def local_tz(self) -> tzinfo:
+        """Return configured local timezone for date grouping and display."""
+        return self._local_tz
+
+    def local_today(self) -> date:
+        """Return today's local calendar date according to the injected clock and local_tz."""
+        raw_now = self._clock()
+        aware = raw_now if raw_now.tzinfo is not None else raw_now.replace(tzinfo=self._local_tz)
+        return aware.astimezone(self._local_tz).date()
+
+    def _to_local_date(self, dt: datetime) -> date:
+        aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+        return aware.astimezone(self._local_tz).date()
+
+    @staticmethod
+    def _sort_task_group(tasks: list[Task], sort_mode: TaskSortMode) -> list[Task]:
+        if sort_mode == TaskSortMode.MANUAL:
+            return sorted(tasks, key=lambda task: (task.sort_order, task.created_at, task.id))
+        if sort_mode == TaskSortMode.NEWEST:
+            ordered = sorted(tasks, key=lambda task: task.id)
+            ordered.sort(key=lambda task: task.created_at, reverse=True)
+            return ordered
+        return sorted(tasks, key=lambda task: (task.created_at, task.id))
+
+    def _filter_tasks_by_date(
+        self,
+        tasks: list[Task],
+        date_filter: TaskDateFilter | None,
+    ) -> list[Task]:
+        if date_filter is None or not date_filter.is_active:
+            return tasks
+        today = self.local_today()
+        return [
+            task
+            for task in tasks
+            if date_filter.matches_date(self._to_local_date(task.created_at), today=today)
+        ]
+
     def add_task_from_input(self, raw: str) -> Task | None:
         """Parse Quick Bar text and create a new Todo Task, or return None if empty."""
         parsed = parse_quick_input(raw)
@@ -89,15 +133,24 @@ class TodoService:
         """List Tasks optionally filtered by TaskStatus."""
         return self._repo.list_tasks(status)
 
-    def list_active_tasks(self) -> list[Task]:
-        """Return Active Tasks with Doing pinned above Todo."""
-        doing = self._repo.list_tasks(TaskStatus.DOING)
-        todo = self._repo.list_tasks(TaskStatus.TODO)
-        return doing + todo
+    def list_active_tasks(
+        self,
+        sort_mode: TaskSortMode = TaskSortMode.MANUAL,
+        date_filter: TaskDateFilter | None = None,
+    ) -> list[Task]:
+        """Return Active Tasks with Doing pinned above Todo, filtered and sorted."""
+        doing = self._filter_tasks_by_date(self._repo.list_tasks(TaskStatus.DOING), date_filter)
+        todo = self._filter_tasks_by_date(self._repo.list_tasks(TaskStatus.TODO), date_filter)
+        return self._sort_task_group(doing, sort_mode) + self._sort_task_group(todo, sort_mode)
 
-    def list_waiting_tasks(self) -> list[Task]:
-        """Return Waiting Tasks in deterministic sort order."""
-        return self._repo.list_tasks(TaskStatus.WAITING)
+    def list_waiting_tasks(
+        self,
+        sort_mode: TaskSortMode = TaskSortMode.MANUAL,
+        date_filter: TaskDateFilter | None = None,
+    ) -> list[Task]:
+        """Return Waiting Tasks filtered by creation date and sorted."""
+        waiting = self._filter_tasks_by_date(self._repo.list_tasks(TaskStatus.WAITING), date_filter)
+        return self._sort_task_group(waiting, sort_mode)
 
     def search_tasks(self, raw_query: str, *, include_done: bool = True) -> list[Task]:
         """Filter Tasks case-insensitively by title and/or @requester (supports leading '/')."""
@@ -411,57 +464,131 @@ class TodoService:
         """Delete a single Work Session by ID."""
         self._repo.delete_work_session(session_id)
 
-    def get_daily_summary(self, day: date) -> DailySummary:
-        """Compute per-Task breakdown, wall-clock active seconds, and overlap for a local day."""
+    def get_daily_summary(self, day: date) -> ActivitySummary:
+        """Compute Activity Summary for a single local calendar day."""
+        return self.get_activity_summary(SummaryPeriod.day(day))
+
+    def get_activity_summary(self, period: SummaryPeriod) -> ActivitySummary:
+        """Compute per-Task breakdown, wall-clock active seconds, overlap, and daily strip."""
         raw_now = self._clock()
         tz = self._local_tz
         now = raw_now if raw_now.tzinfo is not None else raw_now.replace(tzinfo=tz)
-        day_start = datetime.combine(day, time.min, tzinfo=tz)
-        day_end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+        period_start = datetime.combine(period.start_date, time.min, tzinfo=tz)
+        period_end = datetime.combine(period.end_date + timedelta(days=1), time.min, tzinfo=tz)
 
         tasks = self._repo.list_tasks()
         all_sessions: list[WorkSession] = []
-        breakdowns: list[TaskDayBreakdown] = []
+        breakdowns: list[TaskSummaryBreakdown] = []
 
         for task in tasks:
-            task_day_seconds = 0
+            task_seconds = 0
             for session in task.work_sessions:
                 all_sessions.append(session)
-                clipped = clip_session_interval(session, now=now, start=day_start, end=day_end)
+                clipped = clip_session_interval(
+                    session, now=now, start=period_start, end=period_end
+                )
                 if clipped is not None:
-                    task_day_seconds += int((clipped[1] - clipped[0]).total_seconds())
+                    task_seconds += int((clipped[1] - clipped[0]).total_seconds())
 
-            completed_on_day = (
-                task.completed_at is not None and day_start <= task.completed_at < day_end
+            completed_in_period = self._is_completed_in_window(
+                task.completed_at, start=period_start, end=period_end
             )
-            if task_day_seconds > 0 or completed_on_day:
+            if task_seconds > 0 or completed_in_period:
                 breakdowns.append(
-                    TaskDayBreakdown(
+                    TaskSummaryBreakdown(
                         task_id=task.id,
                         title=task.title,
                         requester=task.requester,
                         status=task.status,
-                        logged_seconds=task_day_seconds,
-                        completed_on_day=completed_on_day,
+                        logged_seconds=task_seconds,
+                        completed_in_period=completed_in_period,
                     )
                 )
 
         breakdowns.sort(
-            key=lambda item: (-item.logged_seconds, not item.completed_on_day, item.title)
+            key=lambda item: (-item.logged_seconds, not item.completed_in_period, item.title)
         )
         total_logged = sum(item.logged_seconds for item in breakdowns)
-        wall_clock = compute_wall_clock_seconds(all_sessions, now=now, start=day_start, end=day_end)
+        wall_clock = compute_wall_clock_seconds(
+            all_sessions, now=now, start=period_start, end=period_end
+        )
         overlap = max(0, total_logged - wall_clock)
-        completed_count = sum(1 for item in breakdowns if item.completed_on_day)
+        completed_count = sum(1 for item in breakdowns if item.completed_in_period)
 
-        return DailySummary(
-            day=day,
+        daily_breakdown = self._build_daily_breakdown(
+            period=period,
+            tasks=tasks,
+            all_sessions=all_sessions,
+            now=now,
+            tz=tz,
+        )
+
+        return ActivitySummary(
+            period=period,
             wall_clock_seconds=wall_clock,
             total_logged_seconds=total_logged,
             overlap_seconds=overlap,
             tasks=tuple(breakdowns),
+            daily_breakdown=daily_breakdown,
             completed_count=completed_count,
         )
+
+    @staticmethod
+    def _is_completed_in_window(
+        completed_at: datetime | None,
+        *,
+        start: datetime,
+        end: datetime,
+    ) -> bool:
+        if completed_at is None:
+            return False
+        aware = (
+            completed_at if completed_at.tzinfo is not None else completed_at.replace(tzinfo=UTC)
+        )
+        return start <= aware < end
+
+    def _build_daily_breakdown(
+        self,
+        *,
+        period: SummaryPeriod,
+        tasks: list[Task],
+        all_sessions: list[WorkSession],
+        now: datetime,
+        tz: tzinfo,
+    ) -> tuple[DayBreakdown, ...]:
+        include_strip = period.kind == SummaryPeriodKind.WEEK or (
+            period.kind == SummaryPeriodKind.CUSTOM and 2 <= period.day_count <= 14
+        )
+        if not include_strip:
+            return ()
+
+        items: list[DayBreakdown] = []
+        for offset in range(period.day_count):
+            day = period.start_date + timedelta(days=offset)
+            day_start = datetime.combine(day, time.min, tzinfo=tz)
+            day_end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+            day_logged = 0
+            for session in all_sessions:
+                clipped = clip_session_interval(session, now=now, start=day_start, end=day_end)
+                if clipped is not None:
+                    day_logged += int((clipped[1] - clipped[0]).total_seconds())
+            day_wall = compute_wall_clock_seconds(
+                all_sessions, now=now, start=day_start, end=day_end
+            )
+            day_completed = sum(
+                1
+                for task in tasks
+                if self._is_completed_in_window(task.completed_at, start=day_start, end=day_end)
+            )
+            items.append(
+                DayBreakdown(
+                    day=day,
+                    wall_clock_seconds=day_wall,
+                    total_logged_seconds=day_logged,
+                    completed_count=day_completed,
+                )
+            )
+        return tuple(items)
 
     def poll_idle_gap(self) -> IdleGap | None:
         """Poll PlatformBridge and emit an IdleGap when user input resumes after idle."""

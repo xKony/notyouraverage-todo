@@ -282,3 +282,49 @@ def create_status_icon(status: TaskStatus, tokens: ColorTokens, size: int = 16) 
 
     painter.end()
     return QIcon(pixmap)
+
+
+def create_filter_icon(
+    color: QColor,
+    *,
+    active_dot_color: QColor | None = None,
+    size: int = 14,
+) -> QIcon:
+    """Render crisp 3-bar filter icon with optional active indicator dot."""
+    pixmap = _blank_pixmap(size)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    scale = size / 14.0
+    painter.scale(scale, scale)
+    painter.setPen(_stroke_pen(color, 1.5))
+
+    painter.drawLine(QPointF(2.2, 4.0), QPointF(11.8, 4.0))
+    painter.drawLine(QPointF(4.0, 7.2), QPointF(10.0, 7.2))
+    painter.drawLine(QPointF(5.8, 10.4), QPointF(8.2, 10.4))
+
+    if active_dot_color is not None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(active_dot_color)
+        painter.drawEllipse(QRectF(10.2, 0.8, 3.4, 3.4))
+
+    painter.end()
+    return QIcon(pixmap)
+
+
+def create_calendar_icon(color: QColor, size: int = 13) -> QIcon:
+    """Render minimalist outline calendar icon for period selector cue."""
+    pixmap = _blank_pixmap(size)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    scale = size / 14.0
+    painter.scale(scale, scale)
+    painter.setPen(_stroke_pen(color, 1.3))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    painter.drawRoundedRect(QRectF(2.2, 3.2, 9.6, 8.6), 2.0, 2.0)
+    painter.drawLine(QPointF(2.4, 6.0), QPointF(11.6, 6.0))
+    painter.drawLine(QPointF(4.8, 1.8), QPointF(4.8, 3.6))
+    painter.drawLine(QPointF(9.2, 1.8), QPointF(9.2, 3.6))
+
+    painter.end()
+    return QIcon(pixmap)

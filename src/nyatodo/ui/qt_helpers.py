@@ -11,6 +11,8 @@ def clear_layout(layout: QLayout) -> None:
             continue
         widget = item.widget()
         if widget is not None:
+            # Hide before detaching so Qt never promotes a visible child into a top-level window.
+            widget.hide()
             widget.setParent(None)
             widget.deleteLater()
             continue

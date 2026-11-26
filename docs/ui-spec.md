@@ -2,7 +2,7 @@
 
 > **Authority:** Create (greenfield desktop operational surface).  
 > **Primary Purpose:** **Operate** — UI disappears into the task. Keyboard-first speed, zero decorative clutter, crisp hierarchy.  
-> **Domain Vocabulary:** Strictly follows [GLOSSARY.md](../GLOSSARY.md) (**Task**, **Task List**, **Requester**, **Task Status** [`Todo`, `Doing`, `Waiting`, `Done`], **Thinking Space**, **Sub-step**, **Task Timer**, **Work Session**, **Daily Summary**).
+> **Domain Vocabulary:** Strictly follows [GLOSSARY.md](../GLOSSARY.md) (**Task**, **Task List**, **Requester**, **Task Status** [`Todo`, `Doing`, `Waiting`, `Done`], **Thinking Space**, **Sub-step**, **Task Timer**, **Work Session**, **Activity Summary**, **Work Week**).
 
 ---
 
@@ -18,8 +18,8 @@
 6. **One accent hue, locked:** Friendly Cobalt (`#4C8DFF` Dark / `#0066FF` Light) is the sole interactive accent across every surface. Semantic status colors are reserved strictly for **Task Status** (`Doing`, `Waiting`, `Done`) and destructive/trim actions (`danger`).
 7. **Shape lock (Corner-Radius Scale):**
    - `12px`: Floating spotlight window outer shell
-   - `10px`: Centered overlay modal (**Settings**)
-   - `8px`: **Quick Bar**, expanded **Thinking Space** inset, **Idle Check** banner, **Daily Summary** hero container, segmented tab track
+   - `10px`: Centered overlay modals (**Settings**, **Activity Summary** period picker)
+   - `8px`: **Quick Bar**, expanded **Thinking Space** inset, **Idle Check** banner, **Activity Summary** hero container, segmented tab track, **Filter & Sort** popover
    - `6px`: **Task** row hover/selection highlight, active segmented tab item
    - `3px`: Ultra-compact shortcut micro-tag keycaps
    - `999px` (half-height pill radius): Header running **Task Timer** pill, `"Added"` pill, `@Requester` pills, **Task Status** pills, **Thinking Space** timer button, **Work Session** quick-adjust chips, **Settings** Done button, status dots
@@ -134,9 +134,9 @@ All foreground tokens are verified to achieve `>= 4.5:1` WCAG AA contrast agains
 │  ○  Draft Q4 migration notes             @Alex    0/3    │ Surface 3: Task Row (Todo)
 │  ✓  Review PR #418                       @Sam            │ Surface 3: Task Row (Done)
 │                                                          │
-├──────────────────────────────────────────────────────────┤
-│ Enter Add · ↓ Move · t Timer · Enter Expand · w Wait     │ Surface 5: Footer (28px, optional)
-└──────────────────────────────────────────────────────────┘
+├───────────────────────────────────────────────────────────────┤
+│ ↓↑ Move · t Timer · n/s/r/e Edit · w Wait · d Done · Esc Hide │ Surface 5: Footer (20px, optional)
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ### Surface 1: Header + Quick Bar
@@ -161,15 +161,11 @@ All foreground tokens are verified to achieve `>= 4.5:1` WCAG AA contrast agains
 
 ### Surface 2: Segmented View Tabs
 
-- **Container (`32px` height, `12px` bottom margin):** Full-width segmented track (`bg_surface`, `6px` radius, `1px solid border_subtle`, `3px` internal padding, `2px` gap between segments).
-- **Three equal-width peer segments (`26px` height, `4px` radius):**
-  1. `1 Active` + tabular count badge (e.g., `6` — all non-`Done`, non-`Waiting` **Tasks**, plus recently completed today if pinned/visible, or `Todo` + `Doing`).
-  2. `2 Waiting` + tabular count badge (e.g., `2`).
-  3. `3 Summary` (opens **Daily Summary**).
-- **Tab States:**
-  - **Active segment:** `bg_elevated` fill, `1px solid border_subtle`, `text_primary` `500` label, `text_secondary` count.
-  - **Inactive segment:** Transparent fill, `text_secondary` `500` label, `text_muted` count; `bg_hover` text shift on hover.
-  - **Transition:** Instant cut (`0ms`); tabs never slide.
+- **Container (`30px` height):** Full-width segmented track (`#SegmentedTabs`) holding `Active`, `Doing`, `Waiting`, up to 3 `@Requester` filter pills, a compact **Filter & Sort** icon button (`#FilterSortButton`, with active indicator dot when non-default sort or date filter is active), and `Summary` (opens **Activity Summary**).
+- **Filter & Sort Popover:** Clicking `#FilterSortButton` smoothly expands/collapses (`160ms` `OutCubic` height animation) an inline popover card (`#FilterPopover`) with:
+  - **Sort:** `Manual` | `Newest` | `Oldest`
+  - **Added:** `Any` | `Today` | `This Week` | `Last Week` | `Custom` (revealing `From` and `To` inclusive date pickers)
+  - Applies across both `Active` and `Waiting` tabs and closes on `Esc`, clicking outside, or clicking `#FilterSortButton` again.
 
 ### Surface 3: Task Row & Expanded Thinking Space
 
@@ -189,6 +185,7 @@ Arranged left-to-right on a single `8px`-spaced horizontal row:
    - `text_primary`, single line with `Qt.ElideRight`.
    - When `Done`: `text_muted` with strikethrough.
 4. **Right Metadata Cluster (`6px` gap, right-aligned):**
+   - Creation date pill (`#TaskDatePill`, if visible): `Today`, `Yesterday`, `Nov 24` (same year), or `Nov 24 '25` (prior year) in `10px` `500` `text_muted` on `bg_elevated`, with full local creation timestamp tooltip (`Added Thu, Nov 26, 2026 · 18:12`).
    - `@Requester` pill (if set): `11px` `500` `text_secondary`, `bg_elevated`, `1px solid border_subtle`, `4px` radius, `2px 6px` padding (max-width `108px`, elided).
    - **Sub-step** counter (if `>= 1` **Sub-step** exists): `2/4` in `Cascadia Mono` `10.5px` `text_muted`.
 
@@ -200,18 +197,19 @@ Arranged left-to-right on a single `8px`-spaced horizontal row:
 #### Expanded **Thinking Space** (Accordion below selected **Task** Row)
 - **Container:** `bg_surface`, `8px` radius, `1px solid border_subtle` (or `border_focus` hairline on left), `12px` inner padding, `4px 0 8px 0` outer vertical margin. Internal sections separated by `12px` gaps and subtle `1px solid border_subtle` hairlines.
 - **Section A — Header & Primary Controls (`8px` gap):**
-  - Editable **Task** Title (`QLineEdit`, transparent background, `13.5px` `600` `text_primary`, subtle bottom `border_focus` line on focus).
+  - Editable **Task** Title (`QLineEdit`, transparent background, `13.5px` `600` `text_primary`, subtle bottom `border_focus` line on focus; `e` shortcut expands and selects text, `Enter` saves and collapses back to **Task List**).
+  - Subtle creation metadata line (`Added Thu, Nov 26 · 18:12`, including year if different from current year) in `10.5px` `text_muted`.
   - Second compact control row (`8px` gap):
-    - Editable `@Requester` chip (`bg_elevated`, `1px solid border_subtle`, `4px` radius; clicking turns into inline `QLineEdit` `@name`, placeholder `+ @requester`).
+    - Editable `@Requester` chip (`bg_elevated`, `1px solid border_subtle`, `4px` radius; clicking or `r` shortcut edits inline `@name`, placeholder `+ @requester`, `selectAll()` on `r`, `Enter` saves and collapses back to **Task List**).
     - **Task Status** selector pill (`Todo` / `Waiting` / `Done` cycle or mini-segmented toggle).
     - Spacer + **Task Timer** button (`26px` height, `6px` radius): `"Start Timer"` (`bg_elevated`, `1px solid border_subtle`, play triangle) or `"Stop 00:14:22"` (`tint_accent`, `1px solid tint_accent_border`, `status_doing` stop square + tabular clock).
 - **Section B — Freeform Notes (`Thinking Space`):**
   - Header label `"Notes"` (`11px` `600` uppercase-muted or sentence-case `text_secondary`) + right-aligned `"Saved"` status micro-text (`10.5px` `text_muted`).
-  - `QPlainTextEdit` (`min-height: 64px`, `max-height: 160px`, `bg_window` background, `1px solid border_subtle`, `6px` radius, `8px` padding, `13px` `text_primary`, placeholder `"Capture context, links, or rough thoughts..."`). Auto-saves on debounce (`400ms`) and blur.
+  - `QPlainTextEdit` (`min-height: 64px`, `max-height: 160px`, `bg_window` background, `1px solid border_subtle`, `6px` radius, `8px` padding, `13px` `text_primary`, placeholder `"Capture context, links, or rough thoughts..."`). `n` shortcut focuses with cursor at the end; `Enter` inserts a newline; auto-saves on debounce (`400ms`), blur, `Ctrl+Enter`, or `Esc`.
 - **Section C — Sub-steps:**
   - Header `"Sub-steps · 2/4"` (`11.5px` `600` `text_secondary`).
   - Vertical list (`4px` gap) of checkable **Sub-step** rows (`26px` height): `14 × 14` square checkbox (`4px` radius, `1.5px` border `border_subtle` -> filled `accent_primary` / `status_done` when checked) + inline-editable `12.5px` label + subtle `×` delete button visible only on row hover.
-  - Bottom quick-add row: `"+ Add sub-step..."` (`26px` height, borderless `QLineEdit` in `12.5px`, `Enter` adds and stays focused for rapid multi-step entry).
+  - Bottom quick-add row: `"+ Add sub-step..."` (`26px` height, borderless `QLineEdit` in `12.5px`, `s` shortcut focuses directly, `Enter` adds and stays focused for rapid multi-step entry).
 - **Section D — Work Sessions:**
   - Header row: `"Work Sessions · 00:44:22"` (`11.5px` `600` `text_secondary` + `Cascadia Mono` total) on left; quick-adjust chips on right (`4px` gap):
     - `-10m`, `+15m`, `+30m`, `+ Manual` (`22px` height, `6px` radius, `bg_elevated`, `1px solid border_subtle`, `Cascadia Mono` `10.5px` `text_secondary`; clicking `+ Manual` reveals compact inline input `"e.g. 25m or 1:15"` + `Add`).
@@ -220,25 +218,24 @@ Arranged left-to-right on a single `8px`-spaced horizontal row:
     - e.g. `10:20 – 10:50` · `30m` · `Timer` (with hover `×` to remove mistaken entry)
     - e.g. `Manual adjustment` · `+15m` (`text_muted`)
 
-### Surface 4: Daily Summary View
+### Surface 4: Activity Summary View
 
 Displayed when Tab `3 Summary` is active (replaces the **Task List** below the segmented tabs; **Quick Bar** remains accessible at top so capture is always 1 shortcut away).
 
-1. **Day Selector Row (`32px` height, `12px` bottom margin):**
-   - Centered or space-between bar: `<` button (`28 × 28`, `6px` radius, `bg_surface`, `1px solid border_subtle`) + Day Label (`"Today · Thu, Nov 25"`, `13px` `600` `text_primary`) + `>` button (disabled when viewing Today).
+1. **Period Selector Row (`32px` height):**
+   - Centered/space-between bar: `<` button (`28 × 28`, `bg_surface`, `1px solid border_subtle`) + clickable centered Period Pill button (`"Today · Thu, Nov 26"`, `"This Week · Nov 23–29"`, `"Last Week · Nov 16–22"`, `"Nov 10 – Nov 26"`, with subtle calendar/dropdown cue) + `>` button (disabled when stepping forward would exceed today's period).
+   - Clicking the Period Pill opens the animated centered **Activity Summary Period Modal** (`#SummaryPeriodModal`, `160ms` `OutCubic` height reveal over `#ModalScrim`) with quick presets (`Today`, `Yesterday`, `This Week`, `Last Week`), mode selector (`Day` | `Work Week` Mon–Sun | `Custom` inclusive `From`–`To`), and `QDateEdit` pickers capped at today.
 2. **Hero Metric Pair (`bg_surface`, `8px` radius, `1px solid border_subtle`, `14px 16px` padding):**
    - Two equal columns separated by a `1px solid border_subtle` vertical hairline:
-     - **Left — Wall-Clock Active:** Label `"Wall-Clock Active"` (`11.5px` `500` `text_secondary`) above `04:42:10` (`22px` `Cascadia Mono` `600` `text_primary`) above `"Time with >=1 timer running"` (`11px` `text_muted`).
-     - **Right — Total Logged:** Label `"Total Logged"` (`11.5px` `500` `text_secondary`) above `05:18:40` (`22px` `Cascadia Mono` `600` `text_primary`) above `"Sum of Work Sessions"` (`11px` `text_muted`).
-   - **Concurrent Overlap Explanation Strip** (rendered inside bottom of hero box separated by `1px` top hairline *only* when `Total Logged > Wall-Clock Active`):
-     - `"Includes 00:36:30 of concurrent Task Timers across overlapping sessions."` (`11.5px` `text_secondary`, `Cascadia Mono` duration).
-3. **Per-Task Breakdown List (`12px` top margin):**
-   - Section Header: `"Tasks Worked & Completed"` (`11.5px` `600` `text_secondary`) + right-aligned task count (`"5 tasks"` in `Cascadia Mono` `11px` `text_muted`).
-   - Breakdown rows (`36px` height, `6px` radius, `0 8px` padding, separated by `1px solid border_subtle` hairlines):
-     - Status indicator (`14px` `status_done` checkmark if completed that day, or `10px` `accent_primary`/`text_muted` dot if worked-on and still open).
-     - **Task** Title (`12.5px` `500` `text_primary`, elided) + optional `@Requester` pill (`11px`).
-     - Proportional horizontal duration bar (`4px` height, `64px` max-width, `bg_surface` track, `accent_primary` fill scaled to day's longest task) + right-aligned `Cascadia Mono` `12px` duration (`01:45:00` or `Done` if completed with `0m` logged).
-   - **Empty Day State:** `"No Work Sessions or completed Tasks for this day."` (`12.5px` `text_muted`, centered).
+     - **Left — Active:** Wall-clock active total (`Time with >=1 timer running`).
+     - **Right — Logged:** Sum of **Work Sessions** across the period.
+   - **Concurrent Overlap Explanation Strip** (rendered inside bottom of hero box separated by `1px` top hairline *only* when `Total Logged > Wall-Clock Active`).
+3. **Clickable Daily Strip (conditional):**
+   - Rendered between the Hero Metric Pair and Breakdown list whenever `daily_breakdown` is non-empty (**Work Week** and 2–14 day **Custom** ranges).
+   - Compact horizontal row of clickable day columns (`Mon`..`Sun` or short date labels) with proportional vertical activity bars and compact duration labels. Clicking any day switches the **Activity Summary** into `Day` mode for that specific date.
+4. **Per-Task Breakdown List (`12px` top margin):**
+   - Section Header: `"Breakdown"` + right-aligned task count badge.
+   - Breakdown rows (`40px` height, `1px solid border_subtle`): status dot/checkmark, **Task** title, optional `@Requester` pill, proportional duration bar, and duration / `✓`.
 
 ### Surface 5: Idle Check Banner, Settings Modal & Toggleable Shortcut Hints Footer
 
@@ -264,9 +261,9 @@ Displayed when Tab `3 Summary` is active (replaces the **Task List** below the s
    - Each hint pairs an ultra-compact micro-tag (`Segoe UI` `9.5px`, `bg_elevated`, `3px` radius, `0px 4px` padding, `text_secondary`, no heavy border) + `10px` `text_muted` verb:
      - **Compact Spotlight:** `Enter` Add · `/` Search · `↓` Expand · `Esc` Hide
      - **Quick Bar focused:** `Enter` Add · `/` Search · `↓` List · `Esc` Hide
-     - **Task List focused (Active / Waiting):** `↓↑` Move · `t` Timer · `Enter` Expand · `w` Waiting · `d` Done · `Esc` Hide
+     - **Task List focused (Active / Waiting):** `↓↑` Move · `t` Timer · `n/s/r/e` Edit · `w` Wait · `d` Done · `Esc` Hide
      - **Thinking Space editing:** `Esc` Collapse · `Ctrl+Enter` Done
-     - **Daily Summary:** `←→` Day · `1–3` Tabs · `Esc` Hide
+     - **Activity Summary:** `←→` Period · `1–3` Tabs · `Esc` Hide
 
 ---
 

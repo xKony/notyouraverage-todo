@@ -1,4 +1,4 @@
-"""Color tokens, typography helpers, and flat QSS stylesheet builder for nyatodo."""
+"""Cozy Morph-Pills color tokens, bundled Poppins typography, and QSS stylesheet builder."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,59 +42,59 @@ class ColorTokens:
 
 DARK_TOKENS = ColorTokens(
     is_dark=True,
-    bg_window="#16171B",
-    bg_surface="#1D1F25",
-    bg_elevated="#252831",
-    bg_thinking="#1D1F25",
-    bg_hover="#222631",
-    bg_selected="#2A3040",
-    border_subtle="#2D313B",
-    border_focus="#4C8DFF",
-    text_primary="#F4F4F5",
-    text_secondary="#A1A1AA",
-    text_muted="#8E8E98",
-    accent_primary="#4C8DFF",
-    status_doing="#4C8DFF",
-    status_waiting="#F59E0B",
-    status_done="#34D399",
+    bg_window="#141417",
+    bg_surface="#1D1E24",
+    bg_elevated="#262730",
+    bg_thinking="#232220",
+    bg_hover="#21232B",
+    bg_selected="#232A3D",
+    border_subtle="#2B2D37",
+    border_focus="#6B9EFF",
+    text_primary="#F4F2ED",
+    text_secondary="#A7A39B",
+    text_muted="#73706A",
+    accent_primary="#6B9EFF",
+    status_doing="#6B9EFF",
+    status_waiting="#FBBF24",
+    status_done="#4ADE80",
     danger="#F87171",
-    tint_accent="rgba(76, 141, 255, 0.14)",
-    tint_accent_border="rgba(76, 141, 255, 0.35)",
-    tint_waiting="rgba(245, 158, 11, 0.12)",
-    tint_waiting_border="rgba(245, 158, 11, 0.38)",
-    tint_done="rgba(52, 211, 153, 0.12)",
-    tint_done_border="rgba(52, 211, 153, 0.32)",
-    tint_danger="rgba(248, 113, 113, 0.12)",
+    tint_accent="rgba(107, 158, 255, 0.15)",
+    tint_accent_border="rgba(107, 158, 255, 0.36)",
+    tint_waiting="rgba(251, 191, 36, 0.14)",
+    tint_waiting_border="rgba(251, 191, 36, 0.36)",
+    tint_done="rgba(74, 222, 128, 0.14)",
+    tint_done_border="rgba(74, 222, 128, 0.32)",
+    tint_danger="rgba(248, 113, 113, 0.14)",
     scrim_modal="rgba(0, 0, 0, 0.56)",
-    modal_bg="#16171B",
+    modal_bg="#1B1C22",
 )
 
 LIGHT_TOKENS = ColorTokens(
     is_dark=False,
     bg_window="#FFFFFF",
-    bg_surface="#FAF8F4",
-    bg_elevated="#FFFFFF",
-    bg_thinking="#FEFCE8",
-    bg_hover="#F4F1EA",
-    bg_selected="#EFF4FF",
-    border_subtle="#E6E2D8",
-    border_focus="#0066FF",
+    bg_surface="#FFFFFF",
+    bg_elevated="#F2F4F7",
+    bg_thinking="#F9FAFB",
+    bg_hover="#F7F8FA",
+    bg_selected="#EEF4FF",
+    border_subtle="#E5E7EB",
+    border_focus="#2F6BFF",
     text_primary="#18181B",
     text_secondary="#52525B",
-    text_muted="#71717A",
-    accent_primary="#0066FF",
-    status_doing="#0066FF",
+    text_muted="#8A8F98",
+    accent_primary="#2F6BFF",
+    status_doing="#2F6BFF",
     status_waiting="#D97706",
-    status_done="#15803D",
+    status_done="#16A34A",
     danger="#DC2626",
-    tint_accent="rgba(0, 102, 255, 0.10)",
-    tint_accent_border="rgba(0, 102, 255, 0.28)",
-    tint_waiting="rgba(217, 119, 6, 0.10)",
+    tint_accent="rgba(47, 107, 255, 0.10)",
+    tint_accent_border="rgba(47, 107, 255, 0.30)",
+    tint_waiting="rgba(217, 119, 6, 0.11)",
     tint_waiting_border="rgba(217, 119, 6, 0.30)",
-    tint_done="rgba(21, 128, 61, 0.10)",
-    tint_done_border="rgba(21, 128, 61, 0.28)",
+    tint_done="rgba(22, 163, 74, 0.11)",
+    tint_done_border="rgba(22, 163, 74, 0.28)",
     tint_danger="rgba(220, 38, 38, 0.08)",
-    scrim_modal="rgba(24, 24, 27, 0.28)",
+    scrim_modal="rgba(24, 24, 27, 0.24)",
     modal_bg="#FFFFFF",
 )
 
@@ -119,7 +119,7 @@ _LOADED_FONT_FAMILY: str | None = None
 
 
 def load_bundled_fonts() -> str:
-    """Register bundled Inter TTF weights with Qt once and return active UI font family."""
+    """Register bundled Poppins TTF weights with Qt once and return active UI font family."""
     global _LOADED_FONT_FAMILY
     if _LOADED_FONT_FAMILY is not None and _LOADED_FONT_FAMILY in QFontDatabase.families():
         return _LOADED_FONT_FAMILY
@@ -130,8 +130,13 @@ def load_bundled_fonts() -> str:
             font_id = QFontDatabase.addApplicationFont(str(font_path))
             if font_id >= 0:
                 families = QFontDatabase.applicationFontFamilies(font_id)
-                if families:
-                    family_name = families[0]
+                for fam in families:
+                    if fam.lower() == "poppins":
+                        family_name = fam
+                        break
+                else:
+                    if families and family_name == "Segoe UI":
+                        family_name = families[0]
 
     _LOADED_FONT_FAMILY = family_name
     app = QGuiApplication.instance()
@@ -143,16 +148,20 @@ def load_bundled_fonts() -> str:
 def make_ui_font(
     pixel_size: int = 13,
     weight: QFont.Weight = QFont.Weight.Normal,
+    *,
+    tracking_em: float = 0.0,
 ) -> QFont:
-    """Create a unified Inter QFont (with Segoe UI fallback) for all nyatodo text."""
+    """Create a Poppins QFont (with Segoe UI fallback) and optional optical tracking."""
     font = QFont()
-    primary = _LOADED_FONT_FAMILY or "Inter"
+    primary = _LOADED_FONT_FAMILY or "Poppins"
     if primary == "Segoe UI":
         font.setFamilies(["Segoe UI"])
     else:
         font.setFamilies([primary, "Segoe UI"])
     font.setPixelSize(pixel_size)
     font.setWeight(weight)
+    if tracking_em != 0.0:
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, pixel_size * tracking_em)
     return font
 
 
@@ -174,11 +183,13 @@ def format_compact_duration(seconds: int) -> str:
 
 
 def build_stylesheet(tokens: ColorTokens) -> str:
-    """Build flat, warm, hairline-bordered QSS stylesheet from ColorTokens."""
+    """Build cozy Morph-Pills QSS stylesheet from ColorTokens."""
     t = tokens
+    segment_track_bg = t.bg_window if t.is_dark else t.bg_elevated
+    segment_active_bg = t.bg_elevated if t.is_dark else t.bg_surface
     return f"""
     QWidget {{
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         color: {t.text_primary};
         outline: none;
     }}
@@ -186,7 +197,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #SpotlightShell {{
         background-color: {t.bg_window};
         border: 1px solid {t.border_subtle};
-        border-radius: 12px;
+        border-radius: 24px;
     }}
 
     #HeaderBar {{
@@ -194,9 +205,9 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
 
     #BrandWordmark {{
-        color: {t.text_primary};
-        font-size: 13px;
-        font-weight: 600;
+        color: {t.text_secondary};
+        font-size: 12px;
+        font-weight: 500;
     }}
 
     #AddedFeedbackPill {{
@@ -206,7 +217,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         color: {t.status_done};
         font-size: 11px;
         font-weight: 600;
-        padding: 0px 8px;
+        padding: 0px 9px;
     }}
 
     #RunningTimerPill {{
@@ -219,7 +230,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.accent_primary};
     }}
     #RunningTimerPillText {{
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 11px;
         font-weight: 600;
         color: {t.status_doing};
@@ -227,56 +238,59 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
 
     #SettingsButton, #ExpandToggleButton {{
-        background-color: transparent;
+        background-color: {t.bg_elevated};
         border: 1px solid transparent;
-        border-radius: 6px;
+        border-radius: 13px;
     }}
     #SettingsButton:hover, #ExpandToggleButton:hover {{
-        background-color: {t.bg_hover};
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
     }}
 
     #QuickBarFrame {{
-        background-color: {t.bg_surface};
-        border: 1px solid {t.border_subtle};
-        border-radius: 8px;
+        background-color: transparent;
+        border: 1px solid transparent;
+        border-radius: 21px;
     }}
-    #QuickBarFrame[focused="true"] {{
-        border: 1px solid {t.border_focus};
+    #QuickBarFrame[focused="true"], #QuickBarFrame[has_text="true"] {{
+        background-color: {t.bg_surface};
+        border: 1px solid {t.tint_accent_border};
     }}
     #QuickBarInput {{
         background-color: transparent;
         border: none;
         color: {t.text_primary};
-        font-size: 13px;
+        font-size: 15px;
+        font-weight: 300;
         selection-background-color: {t.accent_primary};
         selection-color: #FFFFFF;
     }}
 
     #RequesterPill {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
+        border: none;
         border-radius: 10px;
         color: {t.text_secondary};
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 500;
-        padding: 1px 8px;
+        padding: 1px 9px;
     }}
 
     #EnterHintKeycap {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
-        border-radius: 4px;
+        border: none;
+        border-radius: 10px;
         color: {t.text_muted};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 10px;
         font-weight: 500;
-        padding: 1px 6px;
+        padding: 1px 8px;
     }}
 
     #IdleBanner {{
         background-color: {t.bg_surface};
         border: 1px solid {t.tint_waiting_border};
-        border-radius: 8px;
+        border-radius: 16px;
     }}
     #IdleBannerText {{
         color: {t.text_primary};
@@ -286,12 +300,12 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
     #IdleKeepButton {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
+        border: none;
         border-radius: 12px;
         color: {t.text_primary};
         font-size: 11px;
         font-weight: 500;
-        padding: 0px 10px;
+        padding: 0px 11px;
     }}
     #IdleKeepButton:hover {{
         background-color: {t.bg_hover};
@@ -303,31 +317,212 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         color: {t.danger};
         font-size: 11px;
         font-weight: 600;
-        padding: 0px 10px;
+        padding: 0px 11px;
     }}
 
     #SegmentedTabs {{
-        background-color: {t.bg_surface};
-        border: 1px solid {t.border_subtle};
-        border-radius: 8px;
+        background-color: transparent;
+        border: none;
     }}
     QPushButton#SegmentTabButton {{
-        background-color: transparent;
+        background-color: {t.bg_elevated};
         border: 1px solid transparent;
-        border-radius: 6px;
+        border-radius: 13px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
-        padding: 0px 8px;
+        padding: 0px 11px;
     }}
     QPushButton#SegmentTabButton:hover {{
-        background-color: {t.bg_hover};
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
         color: {t.text_primary};
     }}
     QPushButton#SegmentTabButton[active="true"] {{
+        background-color: {t.accent_primary};
+        border: 1px solid {t.accent_primary};
+        color: #FFFFFF;
+        font-weight: 600;
+    }}
+    QPushButton#SegmentTabButton[kind="waiting"][active="true"] {{
+        background-color: {t.tint_waiting};
+        border: 1px solid {t.tint_waiting_border};
+        color: {t.status_waiting};
+        font-weight: 600;
+    }}
+
+    QPushButton#FilterSortButton {{
         background-color: {t.bg_elevated};
+        border: 1px solid transparent;
+        border-radius: 13px;
+        color: {t.text_secondary};
+    }}
+    QPushButton#FilterSortButton:hover {{
+        background-color: {t.bg_surface};
         border: 1px solid {t.border_subtle};
         color: {t.text_primary};
+    }}
+    QPushButton#FilterSortButton[active="true"] {{
+        background-color: {t.tint_accent};
+        border: 1px solid {t.tint_accent_border};
+        color: {t.accent_primary};
+    }}
+
+    #FilterPopover {{
+        background-color: {t.modal_bg};
+        border: 1px solid {t.border_subtle};
+        border-radius: 16px;
+    }}
+    #FilterSectionLabel {{
+        color: {t.text_secondary};
+        font-size: 10.5px;
+        font-weight: 600;
+        background: transparent;
+    }}
+    #FilterFieldLabel {{
+        color: {t.text_muted};
+        font-size: 11px;
+        font-weight: 500;
+        background: transparent;
+    }}
+    QPushButton#FilterChipButton {{
+        background-color: {t.bg_elevated};
+        border: 1px solid transparent;
+        border-radius: 11px;
+        color: {t.text_secondary};
+        font-size: 11px;
+        font-weight: 500;
+        padding: 0px 10px;
+    }}
+    QPushButton#FilterChipButton:hover {{
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
+        color: {t.text_primary};
+    }}
+    QPushButton#FilterChipButton[active="true"] {{
+        background-color: {t.accent_primary};
+        border: 1px solid {t.accent_primary};
+        color: #FFFFFF;
+        font-weight: 600;
+    }}
+    QPushButton#ModalResetButton {{
+        background-color: transparent;
+        border: none;
+        color: {t.accent_primary};
+        font-size: 10.5px;
+        font-weight: 600;
+        padding: 0px 4px;
+    }}
+    QPushButton#ModalResetButton:disabled {{
+        color: {t.text_muted};
+    }}
+
+    QDateEdit#DatePickerEdit {{
+        background-color: {t.bg_elevated};
+        border: 1px solid {t.border_subtle};
+        border-radius: 10px;
+        color: {t.text_primary};
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 2px 8px;
+    }}
+    QDateEdit#DatePickerEdit:focus {{
+        border: 1px solid {t.border_focus};
+    }}
+    QDateEdit#DatePickerEdit::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: center right;
+        width: 18px;
+        border: none;
+        background: transparent;
+    }}
+    QCalendarWidget QWidget {{
+        background-color: {t.modal_bg};
+        color: {t.text_primary};
+        alternate-background-color: {t.bg_surface};
+    }}
+    QCalendarWidget QToolButton {{
+        background-color: {t.bg_elevated};
+        color: {t.text_primary};
+        border: none;
+        border-radius: 6px;
+        padding: 3px 6px;
+        font-size: 11px;
+        font-weight: 600;
+    }}
+    QCalendarWidget QToolButton:hover {{
+        background-color: {t.bg_hover};
+    }}
+    QCalendarWidget QMenu {{
+        background-color: {t.modal_bg};
+        border: 1px solid {t.border_subtle};
+        color: {t.text_primary};
+    }}
+    QCalendarWidget QSpinBox {{
+        background-color: {t.bg_elevated};
+        border: 1px solid {t.border_subtle};
+        border-radius: 6px;
+        color: {t.text_primary};
+        padding: 1px 4px;
+    }}
+    QCalendarWidget QAbstractItemView:enabled {{
+        background-color: {t.modal_bg};
+        color: {t.text_primary};
+        selection-background-color: {t.accent_primary};
+        selection-color: #FFFFFF;
+        outline: none;
+    }}
+    QCalendarWidget QAbstractItemView:disabled {{
+        color: {t.text_muted};
+    }}
+
+    QPushButton#RequesterFilterPill,
+    QPushButton#RequesterOverflowButton {{
+        background-color: {t.bg_elevated};
+        border: 1px solid transparent;
+        border-radius: 13px;
+        color: {t.text_secondary};
+        font-size: 10.5px;
+        font-weight: 500;
+        padding: 0px 10px;
+    }}
+    QPushButton#RequesterFilterPill:hover,
+    QPushButton#RequesterOverflowButton:hover {{
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
+        color: {t.text_primary};
+    }}
+    QPushButton#RequesterFilterPill[active="true"],
+    QPushButton#RequesterOverflowButton[active="true"] {{
+        background-color: {t.accent_primary};
+        border: 1px solid {t.accent_primary};
+        color: #FFFFFF;
+        font-weight: 600;
+    }}
+
+    #RequesterPopover {{
+        background-color: {t.modal_bg};
+        border: 1px solid {t.border_subtle};
+        border-radius: 16px;
+    }}
+    QPushButton#RequesterPopoverItem {{
+        background-color: transparent;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        color: {t.text_primary};
+        font-size: 11px;
+        font-weight: 500;
+        text-align: left;
+        padding: 0px 10px;
+    }}
+    QPushButton#RequesterPopoverItem:hover {{
+        background-color: {t.bg_hover};
+    }}
+    QPushButton#RequesterPopoverItem[active="true"] {{
+        background-color: {t.tint_accent};
+        border: 1px solid {t.tint_accent_border};
+        color: {t.accent_primary};
         font-weight: 600;
     }}
 
@@ -346,12 +541,12 @@ def build_stylesheet(tokens: ColorTokens) -> str:
 
     QScrollBar:vertical {{
         background: transparent;
-        width: 6px;
+        width: 5px;
         margin: 2px 0px 2px 0px;
     }}
     QScrollBar::handle:vertical {{
         background: {t.border_subtle};
-        border-radius: 3px;
+        border-radius: 2px;
         min-height: 24px;
     }}
     QScrollBar::handle:vertical:hover {{
@@ -365,13 +560,20 @@ def build_stylesheet(tokens: ColorTokens) -> str:
 
     #TaskRow {{
         background-color: transparent;
-        border-radius: 6px;
+        border: 1px solid transparent;
+        border-radius: 18px;
     }}
     #TaskRow:hover {{
         background-color: {t.bg_hover};
+        border: 1px solid {t.border_subtle};
+    }}
+    #TaskRow[doing="true"] {{
+        background-color: {t.bg_surface};
+        border: 1px solid {t.tint_accent_border};
     }}
     #TaskRow[selected="true"] {{
         background-color: {t.bg_selected};
+        border: 1px solid {t.tint_accent_border};
     }}
     #TaskRow[selected="true"]:hover {{
         background-color: {t.bg_selected};
@@ -384,21 +586,26 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
 
     #TaskTimerLabel {{
-        font-family: "Inter", "Segoe UI", sans-serif;
-        font-size: 12px;
-        font-weight: 600;
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-size: 11px;
+        font-weight: 700;
         color: {t.status_doing};
-        background: transparent;
+        background-color: {t.tint_accent};
+        border-radius: 11px;
+        padding: 2px 9px;
     }}
     #TaskTimerLabel[paused="true"] {{
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 500;
         color: {t.text_muted};
+        background-color: {t.bg_elevated};
+        border-radius: 10px;
+        padding: 1px 8px;
     }}
 
     #TaskTitleLabel {{
         font-size: 13px;
-        font-weight: 500;
+        font-weight: 400;
         color: {t.text_primary};
         background: transparent;
     }}
@@ -406,25 +613,43 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         color: {t.text_muted};
     }}
 
-    #SubStepCountLabel {{
-        font-family: "Inter", "Segoe UI", sans-serif;
-        font-size: 10.5px;
+    #TaskDatePill {{
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-size: 10px;
         font-weight: 500;
         color: {t.text_muted};
-        background: transparent;
+        background-color: {t.bg_elevated};
+        border-radius: 10px;
+        padding: 2px 7px;
+    }}
+
+    #SubStepCountLabel {{
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-size: 10px;
+        font-weight: 500;
+        color: {t.text_muted};
+        background-color: {t.bg_elevated};
+        border-radius: 10px;
+        padding: 2px 8px;
     }}
 
     #ThinkingSpace {{
         background-color: {t.bg_thinking};
         border: 1px solid {t.border_subtle};
-        border-radius: 8px;
+        border-radius: 20px;
+    }}
+    #ThinkingAddedLabel {{
+        color: {t.text_muted};
+        font-size: 10.5px;
+        font-weight: 400;
+        background: transparent;
     }}
     #ThinkingTitleEdit {{
         background-color: transparent;
         border: none;
         border-bottom: 1px solid transparent;
         color: {t.text_primary};
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 600;
         padding: 2px 0px;
     }}
@@ -433,12 +658,12 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     }}
     #ThinkingRequesterEdit {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
-        border-radius: 10px;
+        border: 1px solid transparent;
+        border-radius: 11px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
-        padding: 2px 8px;
+        padding: 2px 10px;
     }}
     #ThinkingRequesterEdit:focus {{
         border: 1px solid {t.border_focus};
@@ -447,7 +672,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
 
     QPushButton#StatusChipButton {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
+        border: 1px solid transparent;
         border-radius: 12px;
         color: {t.text_secondary};
         font-size: 11px;
@@ -455,19 +680,20 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         padding: 2px 10px;
     }}
     QPushButton#StatusChipButton:hover {{
-        background-color: {t.bg_hover};
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
         color: {t.text_primary};
     }}
     QPushButton#StatusChipButton[active="true"] {{
         background-color: {t.tint_accent};
-        border: 1px solid {t.accent_primary};
+        border: 1px solid {t.tint_accent_border};
         color: {t.accent_primary};
         font-weight: 600;
     }}
 
     QPushButton#ThinkingTimerButton {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
+        border: 1px solid transparent;
         border-radius: 13px;
         color: {t.text_primary};
         font-size: 11px;
@@ -475,13 +701,14 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         padding: 0px 12px;
     }}
     QPushButton#ThinkingTimerButton:hover {{
-        background-color: {t.bg_hover};
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
     }}
     QPushButton#ThinkingTimerButton[running="true"] {{
         background-color: {t.tint_accent};
         border: 1px solid {t.tint_accent_border};
         color: {t.status_doing};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-weight: 600;
     }}
 
@@ -507,16 +734,18 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #SavedStatusLabel {{
         color: {t.text_muted};
         font-size: 10px;
+        font-weight: 300;
         background: transparent;
     }}
 
     #NotesEditor {{
-        background-color: {t.bg_window};
+        background-color: {t.bg_surface};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 14px;
         color: {t.text_primary};
-        font-size: 13px;
-        padding: 6px 8px;
+        font-size: 12.5px;
+        font-weight: 300;
+        padding: 8px 10px;
     }}
     #NotesEditor:focus {{
         border: 1px solid {t.border_focus};
@@ -533,44 +762,45 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         color: {t.text_muted};
     }}
     #AddSubStepInput {{
-        background-color: transparent;
+        background-color: {t.bg_elevated};
         border: none;
-        border-bottom: 1px solid transparent;
+        border-radius: 12px;
         color: {t.text_primary};
         font-size: 12px;
-        padding: 2px 0px;
+        font-weight: 300;
+        padding: 4px 10px;
     }}
     #AddSubStepInput:focus {{
-        border-bottom: 1px solid {t.border_focus};
+        background-color: {t.bg_surface};
     }}
 
     QPushButton#SessionChip {{
         background-color: {t.bg_elevated};
-        border: 1px solid {t.border_subtle};
+        border: none;
         border-radius: 11px;
         color: {t.text_secondary};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 10.5px;
         font-weight: 500;
-        padding: 0px 9px;
+        padding: 0px 10px;
     }}
     QPushButton#SessionChip:hover {{
-        background-color: {t.bg_hover};
-        color: {t.text_primary};
+        background-color: {t.tint_accent};
+        color: {t.accent_primary};
     }}
 
     #ManualDurationInput {{
-        background-color: {t.bg_window};
+        background-color: {t.bg_surface};
         border: 1px solid {t.border_focus};
-        border-radius: 6px;
+        border-radius: 12px;
         color: {t.text_primary};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 11px;
-        padding: 2px 8px;
+        padding: 2px 10px;
     }}
 
     #SessionRowLabel {{
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 11px;
         color: {t.text_secondary};
         background: transparent;
@@ -583,7 +813,7 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     QToolButton#RowDeleteButton {{
         background-color: transparent;
         border: none;
-        border-radius: 4px;
+        border-radius: 10px;
         color: {t.text_muted};
         font-size: 12px;
     }}
@@ -595,15 +825,55 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #DayNavButton {{
         background-color: {t.bg_surface};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 14px;
         color: {t.text_secondary};
     }}
     #DayNavButton:hover:enabled {{
-        background-color: {t.bg_hover};
+        background-color: {t.bg_elevated};
         color: {t.text_primary};
     }}
     #DayNavButton:disabled {{
         color: {t.text_muted};
+    }}
+    QPushButton#SummaryPeriodButton {{
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
+        border-radius: 14px;
+        color: {t.text_primary};
+        font-size: 12px;
+        font-weight: 600;
+        padding: 0px 12px;
+    }}
+    QPushButton#SummaryPeriodButton:hover {{
+        background-color: {t.bg_elevated};
+        border: 1px solid {t.border_focus};
+    }}
+    #DailyStripFrame {{
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
+        border-radius: 16px;
+    }}
+    QPushButton#DailyStripDay {{
+        background-color: transparent;
+        border: 1px solid transparent;
+        border-radius: 11px;
+        padding: 2px;
+    }}
+    QPushButton#DailyStripDay:hover {{
+        background-color: {t.bg_hover};
+        border: 1px solid {t.border_subtle};
+    }}
+    QPushButton#DailyStripDay[today="true"] {{
+        border: 1px solid {t.tint_accent_border};
+        background-color: {t.tint_accent};
+    }}
+    #DailyStripDayLabel {{
+        color: {t.text_secondary};
+        background: transparent;
+    }}
+    #DailyStripDurationLabel {{
+        color: {t.text_muted};
+        background: transparent;
     }}
     #DayTitleLabel {{
         color: {t.text_primary};
@@ -615,37 +885,44 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #SummaryHero {{
         background-color: {t.bg_surface};
         border: 1px solid {t.border_subtle};
-        border-radius: 8px;
+        border-radius: 22px;
     }}
     #HeroMetricTitle {{
-        color: {t.text_secondary};
-        font-size: 11px;
+        color: {t.text_muted};
+        font-size: 10.5px;
         font-weight: 500;
         background: transparent;
     }}
     #HeroMetricValue {{
-        font-family: "Inter", "Segoe UI", sans-serif;
-        font-size: 22px;
-        font-weight: 600;
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-size: 24px;
+        font-weight: 700;
         color: {t.text_primary};
         background: transparent;
     }}
+    #HeroMetricValue[secondary="true"] {{
+        font-weight: 200;
+        color: {t.text_secondary};
+    }}
     #HeroMetricCaption {{
         color: {t.text_muted};
-        font-size: 11px;
+        font-size: 10.5px;
+        font-weight: 300;
         background: transparent;
     }}
     #OverlapCaption {{
         color: {t.text_secondary};
         font-size: 11px;
+        font-weight: 300;
         background: transparent;
     }}
     #SummaryBreakdownRow {{
-        background-color: transparent;
-        border-bottom: 1px solid {t.border_subtle};
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
+        border-radius: 18px;
     }}
     #SummaryDurationLabel {{
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 12px;
         font-weight: 600;
         color: {t.text_primary};
@@ -661,17 +938,18 @@ def build_stylesheet(tokens: ColorTokens) -> str:
     #EmptyStateHint {{
         color: {t.text_muted};
         font-size: 12px;
+        font-weight: 300;
         background: transparent;
     }}
 
     #ModalScrim {{
         background-color: {t.scrim_modal};
-        border-radius: 12px;
+        border-radius: 24px;
     }}
-    #SettingsModal {{
+    #SettingsModal, #SummaryPeriodModal {{
         background-color: {t.modal_bg};
         border: 1px solid {t.border_subtle};
-        border-radius: 10px;
+        border-radius: 22px;
     }}
     #SettingsTitle {{
         color: {t.text_primary};
@@ -686,14 +964,14 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         background: transparent;
     }}
     #SettingsSegmentTrack {{
-        background-color: {t.bg_surface};
-        border: 1px solid {t.border_subtle};
-        border-radius: 8px;
+        background-color: {segment_track_bg};
+        border: none;
+        border-radius: 14px;
     }}
     QPushButton#SettingsSegmentOption {{
         background-color: transparent;
         border: 1px solid transparent;
-        border-radius: 6px;
+        border-radius: 11px;
         color: {t.text_secondary};
         font-size: 11px;
         font-weight: 500;
@@ -703,23 +981,25 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         color: {t.text_primary};
     }}
     QPushButton#SettingsSegmentOption[active="true"] {{
-        background-color: {t.bg_elevated};
+        background-color: {segment_active_bg};
         border: 1px solid {t.border_subtle};
+        border-radius: 11px;
         color: {t.text_primary};
         font-weight: 600;
     }}
     QPushButton#ShortcutCaptureButton {{
-        background-color: {t.bg_surface};
-        border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        background-color: {t.bg_elevated};
+        border: 1px solid transparent;
+        border-radius: 13px;
         color: {t.text_primary};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 11px;
         font-weight: 600;
-        padding: 0px 10px;
+        padding: 0px 12px;
     }}
     QPushButton#ShortcutCaptureButton:hover {{
-        background-color: {t.bg_hover};
+        background-color: {t.bg_surface};
+        border: 1px solid {t.border_subtle};
     }}
     QPushButton#ShortcutCaptureButton[capturing="true"] {{
         border: 1px solid {t.border_focus};
@@ -730,40 +1010,41 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         font-size: 11px;
         background: transparent;
     }}
-    QComboBox#IdleThresholdCombo {{
-        background-color: {t.bg_surface};
-        border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+    QComboBox#IdleThresholdCombo, QComboBox#AutoHideDelayCombo {{
+        background-color: {t.bg_elevated};
+        border: 1px solid transparent;
+        border-radius: 14px;
         color: {t.text_primary};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 12px;
         font-weight: 500;
-        padding: 2px 24px 2px 10px;
+        padding: 2px 24px 2px 12px;
     }}
-    QComboBox#IdleThresholdCombo:hover {{
-        background-color: {t.bg_hover};
+    QComboBox#IdleThresholdCombo:hover, QComboBox#AutoHideDelayCombo:hover {{
+        background-color: {t.bg_surface};
         border: 1px solid {t.border_focus};
     }}
-    QComboBox#IdleThresholdCombo::drop-down {{
+    QComboBox#IdleThresholdCombo::drop-down, QComboBox#AutoHideDelayCombo::drop-down {{
         subcontrol-origin: padding;
         subcontrol-position: top right;
         width: 20px;
         border: none;
         background: transparent;
     }}
-    QComboBox#IdleThresholdCombo::down-arrow {{
+    QComboBox#IdleThresholdCombo::down-arrow, QComboBox#AutoHideDelayCombo::down-arrow {{
         image: none;
         width: 0px;
         height: 0px;
     }}
-    QComboBox#IdleThresholdCombo QAbstractItemView {{
+    QComboBox#IdleThresholdCombo QAbstractItemView,
+    QComboBox#AutoHideDelayCombo QAbstractItemView {{
         background-color: {t.modal_bg};
         border: 1px solid {t.border_subtle};
-        border-radius: 6px;
+        border-radius: 12px;
         color: {t.text_primary};
         selection-background-color: {t.bg_selected};
         selection-color: {t.text_primary};
-        padding: 2px;
+        padding: 4px;
         outline: none;
     }}
     QPushButton#SettingsDoneButton {{
@@ -773,29 +1054,42 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         color: #FFFFFF;
         font-size: 12px;
         font-weight: 600;
-        padding: 0px 16px;
+        padding: 0px 18px;
+    }}
+    QPushButton#ModalSecondaryButton {{
+        background-color: {t.bg_elevated};
+        border: 1px solid {t.border_subtle};
+        border-radius: 14px;
+        color: {t.text_primary};
+        font-size: 12px;
+        font-weight: 500;
+        padding: 0px 14px;
+    }}
+    QPushButton#ModalSecondaryButton:hover {{
+        background-color: {t.bg_surface};
     }}
 
     #HintsFooter {{
-        background-color: {t.bg_surface};
+        background-color: transparent;
         border-top: 1px solid {t.border_subtle};
-        border-bottom-left-radius: 12px;
-        border-bottom-right-radius: 12px;
+        border-bottom-left-radius: 24px;
+        border-bottom-right-radius: 24px;
     }}
     #KeycapLabel {{
         background-color: {t.bg_elevated};
         border: none;
-        border-radius: 3px;
+        border-radius: 6px;
         color: {t.text_secondary};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 9.5px;
         font-weight: 600;
-        padding: 0px 4px;
+        padding: 0px 5px;
     }}
     #HintVerbLabel {{
         color: {t.text_muted};
-        font-family: "Inter", "Segoe UI", sans-serif;
+        font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 10px;
+        font-weight: 300;
         background: transparent;
     }}
     """

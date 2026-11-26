@@ -5,13 +5,23 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import pytest
 
 from nyatodo.domain import (
+    ActivitySummary,
+    DayBreakdown,
     IdleThreshold,
     Settings,
+    SummaryPeriod,
+    SummaryPeriodKind,
     Task,
+    TaskDateFilter,
+    TaskDateFilterMode,
+    TaskSortMode,
     TaskStatus,
     ThemeMode,
     WorkSession,
     compute_wall_clock_seconds,
+    format_summary_period_label,
+    format_task_added_full,
+    format_task_date_pill,
 )
 from nyatodo.service import TodoService
 from nyatodo.storage import SQLiteRepository
@@ -495,3 +505,318 @@ def test_service_poll_idle_gap_triggers_on_resume_and_delegates_system_theme() -
         service.update_settings(Settings(idle_threshold=IdleThreshold.OFF))
         platform.idle_seconds = 0.0
         assert service.poll_idle_gap() is None
+
+
+def test_task_date_filter_and_sort_modes_respect_local_tz_and_doing_pinning() -> None:
+    local_tz = timezone(timedelta(hours=2))
+    # Anchor "now" at Thu 2026-11-26 12:00+02:00 (10:00 UTC)
+    # Local This Week = Mon 2026-11-23 .. Sun 2026-11-29
+    # Local Last Week = Mon 2026-11-16 .. Sun 2026-11-22
+    clock = _FakeClock(datetime(2026, 11, 16, 10, 0, tzinfo=UTC))
+    with SQLiteRepository(":memory:") as repo:
+        service = TodoService(repo, clock=clock, local_tz=local_tz)
+
+        # Last week Monday (Nov 16 12:00+02:00)
+        t_last_week = service.add_task_from_input("Last week task")
+        # UTC Nov 22 22:30 == Local Nov 23 00:30+02:00 -> THIS_WEEK (Monday), NOT Last Week!
+        clock.current = datetime(2026, 11, 22, 22, 30, tzinfo=UTC)
+        t_tz_boundary = service.add_task_from_input("Midnight boundary task")
+        # Nov 24 local (Tuesday this week)
+        clock.current = datetime(2026, 11, 24, 9, 0, tzinfo=UTC)
+        t_this_week = service.add_task_from_input("This week task")
+        # Nov 26 local (Today) - two tasks with identical created_at to verify ID tie-breaker
+        clock.current = datetime(2026, 11, 26, 8, 0, tzinfo=UTC)
+        t_today_a = service.add_task_from_input("Today A")
+        t_today_b = service.add_task_from_input("Today B")
+        # Waiting task created today
+        t_waiting_new = service.add_task_from_input("Waiting new")
+        # Waiting task created last week
+        clock.current = datetime(2026, 11, 18, 9, 0, tzinfo=UTC)
+        t_waiting_old = service.add_task_from_input("Waiting old")
+
+        assert (
+            t_last_week is not None
+            and t_tz_boundary is not None
+            and t_this_week is not None
+            and t_today_a is not None
+            and t_today_b is not None
+            and t_waiting_new is not None
+            and t_waiting_old is not None
+        )
+
+        # Set Doing on oldest task (t_last_week) and Waiting on waiting tasks
+        clock.current = datetime(2026, 11, 26, 10, 0, tzinfo=UTC)  # 12:00+02:00
+        service.set_status(t_last_week.id, TaskStatus.DOING)
+        service.set_status(t_waiting_new.id, TaskStatus.WAITING)
+        service.set_status(t_waiting_old.id, TaskStatus.WAITING)
+
+        # Reorder Todo tasks manually: move t_today_a up once
+        service.reorder_task(t_today_a.id, -1)
+        manual_ids = [t.id for t in service.list_active_tasks(sort_mode=TaskSortMode.MANUAL)]
+        assert manual_ids == [
+            t_last_week.id,  # Doing pinned on top
+            t_tz_boundary.id,
+            t_today_a.id,
+            t_this_week.id,
+            t_today_b.id,
+        ]
+
+        # NEWEST: Doing stays pinned on top, Todo sorted newest first with id tie-breaker
+        newest_ids = [t.id for t in service.list_active_tasks(sort_mode=TaskSortMode.NEWEST)]
+        same_ts_pair = sorted([t_today_a.id, t_today_b.id])
+        assert newest_ids == [
+            t_last_week.id,
+            *same_ts_pair,
+            t_this_week.id,
+            t_tz_boundary.id,
+        ]
+
+        # OLDEST: Doing stays pinned on top, Todo sorted oldest first with id tie-breaker
+        oldest_ids = [t.id for t in service.list_active_tasks(sort_mode=TaskSortMode.OLDEST)]
+        assert oldest_ids == [
+            t_last_week.id,
+            t_tz_boundary.id,
+            t_this_week.id,
+            *same_ts_pair,
+        ]
+
+        # Waiting tab sorting
+        assert [t.id for t in service.list_waiting_tasks(sort_mode=TaskSortMode.NEWEST)] == [
+            t_waiting_new.id,
+            t_waiting_old.id,
+        ]
+        assert [t.id for t in service.list_waiting_tasks(sort_mode=TaskSortMode.OLDEST)] == [
+            t_waiting_old.id,
+            t_waiting_new.id,
+        ]
+
+        # Date filters
+        assert {
+            t.id
+            for t in service.list_active_tasks(date_filter=TaskDateFilter(TaskDateFilterMode.TODAY))
+        } == {t_today_a.id, t_today_b.id}
+
+        assert {
+            t.id
+            for t in service.list_active_tasks(
+                date_filter=TaskDateFilter(TaskDateFilterMode.THIS_WEEK)
+            )
+        } == {t_tz_boundary.id, t_this_week.id, t_today_a.id, t_today_b.id}
+
+        assert [
+            t.id
+            for t in service.list_active_tasks(
+                date_filter=TaskDateFilter(TaskDateFilterMode.LAST_WEEK)
+            )
+        ] == [t_last_week.id]
+
+        assert [
+            t.id
+            for t in service.list_waiting_tasks(
+                date_filter=TaskDateFilter(TaskDateFilterMode.LAST_WEEK)
+            )
+        ] == [t_waiting_old.id]
+
+        custom = TaskDateFilter(
+            TaskDateFilterMode.CUSTOM,
+            start_date=date(2026, 11, 23),
+            end_date=date(2026, 11, 24),
+        )
+        assert {t.id for t in service.list_active_tasks(date_filter=custom)} == {
+            t_tz_boundary.id,
+            t_this_week.id,
+        }
+
+        with pytest.raises(ValueError):
+            TaskDateFilter(
+                TaskDateFilterMode.CUSTOM,
+                start_date=date(2026, 11, 25),
+                end_date=date(2026, 11, 20),
+            )
+
+
+def test_summary_period_work_week_stepping_and_bounds() -> None:
+    # Wed 2025-12-31 belongs to Mon 2025-12-29 .. Sun 2026-01-04
+    nye_week = SummaryPeriod.work_week(date(2025, 12, 31))
+    assert nye_week.kind == SummaryPeriodKind.WEEK
+    assert nye_week.start_date == date(2025, 12, 29)
+    assert nye_week.end_date == date(2026, 1, 4)
+    assert nye_week.day_count == 7
+    assert nye_week.contains_date(date(2026, 1, 1))
+    assert not nye_week.contains_date(date(2026, 1, 5))
+
+    # Sunday maps to the same Mon-Sun Work Week
+    assert SummaryPeriod.work_week(date(2026, 1, 4)) == nye_week
+
+    today = date(2026, 11, 26)  # Thursday; this work week is Nov 23..Nov 29
+    this_week = SummaryPeriod.work_week(today)
+    assert this_week.start_date == date(2026, 11, 23)
+    assert this_week.end_date == date(2026, 11, 29)
+    assert not this_week.can_step_next(today)
+    assert this_week.step(1, today=today) is None
+
+    last_week = this_week.step(-1, today=today)
+    assert last_week == SummaryPeriod.work_week(date(2026, 11, 16))
+    assert last_week is not None
+    assert last_week.can_step_next(today)
+    assert last_week.step(1, today=today) == this_week
+
+    # Day mode stepping
+    day_today = SummaryPeriod.day(today)
+    assert not day_today.can_step_next(today)
+    assert day_today.step(1, today=today) is None
+    yesterday = day_today.step(-1, today=today)
+    assert yesterday == SummaryPeriod.day(date(2026, 11, 25))
+    assert yesterday is not None and yesterday.step(1, today=today) == day_today
+
+    # Custom range validation & stepping
+    with pytest.raises(ValueError):
+        SummaryPeriod.custom(date(2026, 11, 25), date(2026, 11, 20))
+
+    custom = SummaryPeriod.custom(date(2026, 11, 10), date(2026, 11, 12))
+    assert custom.day_count == 3
+    assert custom.can_step_next(today)
+    assert custom.step(1, today=today) == SummaryPeriod.custom(
+        date(2026, 11, 13), date(2026, 11, 15)
+    )
+    assert custom.step(-1, today=today) == SummaryPeriod.custom(
+        date(2026, 11, 7), date(2026, 11, 9)
+    )
+
+    at_today = SummaryPeriod.custom(date(2026, 11, 24), today)
+    assert not at_today.can_step_next(today)
+    assert at_today.step(1, today=today) is None
+
+
+def test_service_activity_summary_week_and_custom_daily_breakdown() -> None:
+    local_tz = timezone(timedelta(hours=2))
+    # Mon Nov 23 .. Sun Nov 29, 2026
+    clock = _FakeClock(datetime(2026, 11, 22, 21, 0, tzinfo=UTC))  # Sun Nov 22 23:00+02:00
+    with SQLiteRepository(":memory:") as repo:
+        service = TodoService(repo, clock=clock, local_tz=local_tz)
+        t1 = service.add_task_from_input("Cross-week deploy @Ops")
+        t2 = service.add_task_from_input("Write tests")
+        t3 = service.add_task_from_input("Quick close")
+        assert t1 is not None and t2 is not None and t3 is not None
+
+        # Session on t1 crossing Sunday Nov 22 23:30+02 -> Monday Nov 23 00:30+02
+        clock.current = datetime(2026, 11, 22, 21, 30, tzinfo=UTC)
+        service.toggle_timer(t1.id)
+        clock.advance(minutes=60)
+        service.toggle_timer(t1.id)
+
+        # Concurrent sessions on Wednesday Nov 25: t1 [10:00..10:30], t2 [10:15..10:45]
+        clock.current = datetime(2026, 11, 25, 8, 0, tzinfo=UTC)  # 10:00+02
+        service.toggle_timer(t1.id)
+        clock.advance(minutes=15)
+        service.toggle_timer(t2.id)
+        clock.advance(minutes=15)
+        service.toggle_timer(t1.id)
+        clock.advance(minutes=15)
+        service.toggle_timer(t2.id)
+
+        # Quick completion on Thursday Nov 26 with 0 logged seconds
+        clock.current = datetime(2026, 11, 26, 9, 0, tzinfo=UTC)
+        service.toggle_done(t3.id)
+
+        week_period = SummaryPeriod.work_week(date(2026, 11, 26))
+        summary = service.get_activity_summary(week_period)
+        assert isinstance(summary, ActivitySummary)
+        assert summary.period == week_period
+        # Mon: 30m (1800s), Wed: t1 30m + t2 30m logged (60m), wall-clock 45m -> total 90m, wall 75m
+        assert summary.total_logged_seconds == 90 * 60
+        assert summary.wall_clock_seconds == 75 * 60
+        assert summary.overlap_seconds == 15 * 60
+        assert summary.completed_count == 1
+        assert {b.task_id for b in summary.tasks} == {t1.id, t2.id, t3.id}
+
+        assert len(summary.daily_breakdown) == 7
+        assert [d.day for d in summary.daily_breakdown] == [
+            date(2026, 11, 23) + timedelta(days=i) for i in range(7)
+        ]
+        by_day = {d.day: d for d in summary.daily_breakdown}
+        assert by_day[date(2026, 11, 23)] == DayBreakdown(
+            day=date(2026, 11, 23),
+            wall_clock_seconds=30 * 60,
+            total_logged_seconds=30 * 60,
+            completed_count=0,
+        )
+        assert by_day[date(2026, 11, 25)] == DayBreakdown(
+            day=date(2026, 11, 25),
+            wall_clock_seconds=45 * 60,
+            total_logged_seconds=60 * 60,
+            completed_count=0,
+        )
+        assert by_day[date(2026, 11, 26)] == DayBreakdown(
+            day=date(2026, 11, 26),
+            wall_clock_seconds=0,
+            total_logged_seconds=0,
+            completed_count=1,
+        )
+
+        # Day mode -> daily_breakdown is empty
+        day_summary = service.get_activity_summary(SummaryPeriod.day(date(2026, 11, 25)))
+        assert day_summary.daily_breakdown == ()
+        assert day_summary.wall_clock_seconds == 45 * 60
+
+        # Custom 1-day -> empty daily_breakdown
+        custom_1 = service.get_activity_summary(
+            SummaryPeriod.custom(date(2026, 11, 25), date(2026, 11, 25))
+        )
+        assert custom_1.daily_breakdown == ()
+
+        # Custom 4-day -> 4 DayBreakdown items
+        custom_4 = service.get_activity_summary(
+            SummaryPeriod.custom(date(2026, 11, 23), date(2026, 11, 26))
+        )
+        assert len(custom_4.daily_breakdown) == 4
+        assert custom_4.wall_clock_seconds == 75 * 60
+
+        # Custom 15-day -> empty daily_breakdown (>14 days)
+        custom_15 = service.get_activity_summary(
+            SummaryPeriod.custom(date(2026, 11, 12), date(2026, 11, 26))
+        )
+        assert custom_15.daily_breakdown == ()
+
+
+def test_domain_date_formatting_helpers() -> None:
+    now = datetime(2026, 11, 26, 18, 12, tzinfo=UTC)
+    today = date(2026, 11, 26)
+
+    assert format_task_date_pill(now, now=now, tz=UTC) == "Today"
+    assert format_task_date_pill(now - timedelta(days=1), now=now, tz=UTC) == "Yesterday"
+    assert (
+        format_task_date_pill(datetime(2026, 11, 5, 9, 0, tzinfo=UTC), now=now, tz=UTC) == "Nov 5"
+    )
+    assert (
+        format_task_date_pill(datetime(2025, 11, 24, 9, 0, tzinfo=UTC), now=now, tz=UTC)
+        == "Nov 24 '25"
+    )
+
+    assert format_task_added_full(now, now=now, tz=UTC) == "Added Thu, Nov 26 · 18:12"
+    assert (
+        format_task_added_full(datetime(2025, 11, 24, 9, 5, tzinfo=UTC), now=now, tz=UTC)
+        == "Added Mon, Nov 24, 2025 · 09:05"
+    )
+
+    assert (
+        format_summary_period_label(SummaryPeriod.day(today), today=today) == "Today · Thu, Nov 26"
+    )
+    assert (
+        format_summary_period_label(SummaryPeriod.day(date(2026, 11, 25)), today=today)
+        == "Yesterday · Wed, Nov 25"
+    )
+    assert (
+        format_summary_period_label(SummaryPeriod.work_week(today), today=today)
+        == "This Week · Nov 23\u201329"
+    )
+    assert (
+        format_summary_period_label(SummaryPeriod.work_week(date(2026, 11, 16)), today=today)
+        == "Last Week · Nov 16\u201322"
+    )
+    assert (
+        format_summary_period_label(
+            SummaryPeriod.custom(date(2026, 11, 10), date(2026, 11, 26)), today=today
+        )
+        == "Nov 10 \u2013 Nov 26"
+    )

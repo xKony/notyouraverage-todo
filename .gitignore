@@ -32,3 +32,15 @@ htmlcov/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Environment, secrets & temp artifacts
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.tmp
+*.bak
+.coverage*
+coverage.xml

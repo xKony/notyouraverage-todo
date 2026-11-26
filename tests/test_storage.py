@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from nyatodo.domain import (
+    AutoHideDelay,
     IdleThreshold,
     Settings,
     SubStep,
@@ -83,6 +84,7 @@ def test_repository_sorting_cascade_delete_and_settings_roundtrip() -> None:
             global_shortcut="Ctrl+Shift+Space",
             show_shortcut_hints=False,
             idle_threshold=IdleThreshold.OFF,
+            auto_hide_delay=AutoHideDelay.FIVE_SEC,
         )
         repo.save_settings(custom_settings)
         assert repo.get_settings() == custom_settings
@@ -113,3 +115,31 @@ def test_repository_context_manager_closes_connection_on_exception() -> None:
 
     with pytest.raises(sqlite3.ProgrammingError):
         repo.list_tasks()
+
+
+def test_repository_migrates_v1_settings_table_to_include_auto_hide_delay(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy_v1.db"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.executescript(
+            """
+            CREATE TABLE settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                theme TEXT NOT NULL,
+                global_shortcut TEXT NOT NULL,
+                show_shortcut_hints INTEGER NOT NULL,
+                idle_threshold_minutes INTEGER
+            );
+            INSERT INTO settings (
+                id, theme, global_shortcut, show_shortcut_hints, idle_threshold_minutes
+            )
+            VALUES (1, 'Dark', 'Ctrl+Alt+Space', 1, 15);
+            PRAGMA user_version = 1;
+            """
+        )
+    conn.close()
+
+    with SQLiteRepository(db_path) as repo:
+        assert repo.schema_version() == 2
+        loaded = repo.get_settings()
+        assert loaded.auto_hide_delay == AutoHideDelay.THREE_SEC

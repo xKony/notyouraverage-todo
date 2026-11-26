@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nyatodo.domain import IdleThreshold, Settings, ThemeMode
+from nyatodo.domain import AutoHideDelay, IdleThreshold, Settings, ThemeMode
 from nyatodo.platform_win32 import parse_hotkey
 from nyatodo.ui.icons import create_close_icon
 from nyatodo.ui.qt_helpers import set_qss_property
@@ -27,6 +27,16 @@ _IDLE_OPTIONS: tuple[tuple[str, IdleThreshold], ...] = (
     ("10m", IdleThreshold.TEN_MIN),
     ("15m", IdleThreshold.FIFTEEN_MIN),
     ("30m", IdleThreshold.THIRTY_MIN),
+)
+
+_AUTO_HIDE_OPTIONS: tuple[tuple[str, AutoHideDelay], ...] = (
+    ("Off", AutoHideDelay.OFF),
+    ("Immediate", AutoHideDelay.IMMEDIATE),
+    ("1s", AutoHideDelay.ONE_SEC),
+    ("3s", AutoHideDelay.THREE_SEC),
+    ("5s", AutoHideDelay.FIVE_SEC),
+    ("10s", AutoHideDelay.TEN_SEC),
+    ("30s", AutoHideDelay.THIRTY_SEC),
 )
 
 _MODIFIER_KEYS = {
@@ -233,6 +243,12 @@ class SettingsOverlay(QWidget):
         card_layout.addWidget(self._make_divider(card))
         card_layout.addLayout(self._make_setting_row(card, "Idle Check Threshold", self.idle_combo))
 
+        self.auto_hide_combo = self._build_auto_hide_control(card)
+        card_layout.addWidget(self._make_divider(card))
+        card_layout.addLayout(
+            self._make_setting_row(card, "Auto-Hide on Focus Loss", self.auto_hide_combo)
+        )
+
         card_layout.addWidget(self._make_divider(card))
         card_layout.addLayout(self._build_footer(card))
         return card
@@ -248,7 +264,7 @@ class SettingsOverlay(QWidget):
 
         self.close_button = QPushButton(card)
         self.close_button.setObjectName("SettingsButton")
-        self.close_button.setFixedSize(24, 24)
+        self.close_button.setFixedSize(26, 26)
         self.close_button.setIconSize(QSize(12, 12))
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_button.clicked.connect(self.close_modal)
@@ -295,6 +311,17 @@ class SettingsOverlay(QWidget):
         combo.currentIndexChanged.connect(self._on_idle_changed)
         return combo
 
+    def _build_auto_hide_control(self, card: QFrame) -> _ThemedComboBox:
+        combo = _ThemedComboBox(card)
+        combo.setObjectName("AutoHideDelayCombo")
+        combo.setFont(make_ui_font(12, QFont.Weight.Medium))
+        combo.setFixedHeight(28)
+        combo.setMinimumWidth(92)
+        for label, delay in _AUTO_HIDE_OPTIONS:
+            combo.addItem(label, delay)
+        combo.currentIndexChanged.connect(self._on_auto_hide_changed)
+        return combo
+
     def _build_footer(self, card: QFrame) -> QHBoxLayout:
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 14, 0, 0)
@@ -317,6 +344,7 @@ class SettingsOverlay(QWidget):
         self.close_button.setIcon(create_close_icon(QColor(tokens.text_secondary), 12))
         self.hints_switch.apply_theme(tokens)
         self.idle_combo.apply_theme(tokens)
+        self.auto_hide_combo.apply_theme(tokens)
 
     def open_with_settings(self, settings: Settings) -> None:
         """Populate modal controls from Settings and display the overlay."""
@@ -332,6 +360,10 @@ class SettingsOverlay(QWidget):
             idx = self.idle_combo.findData(settings.idle_threshold)
             if idx >= 0:
                 self.idle_combo.setCurrentIndex(idx)
+
+            auto_hide_idx = self.auto_hide_combo.findData(settings.auto_hide_delay)
+            if auto_hide_idx >= 0:
+                self.auto_hide_combo.setCurrentIndex(auto_hide_idx)
         finally:
             self._loading = False
 
@@ -449,6 +481,14 @@ class SettingsOverlay(QWidget):
         if not isinstance(threshold, IdleThreshold):
             return
         self._emit_updated(replace(self._settings, idle_threshold=threshold))
+
+    def _on_auto_hide_changed(self, index: int) -> None:
+        if self._loading or index < 0:
+            return
+        delay = self.auto_hide_combo.itemData(index)
+        if not isinstance(delay, AutoHideDelay):
+            return
+        self._emit_updated(replace(self._settings, auto_hide_delay=delay))
 
     def _emit_updated(self, new_settings: Settings) -> None:
         self._settings = new_settings

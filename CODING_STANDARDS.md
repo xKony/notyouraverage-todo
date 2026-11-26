@@ -27,7 +27,7 @@ Dependencies must flow strictly inward toward `nyatodo.domain`. Lower layers nev
   - SQLite persistence (`SQLiteRepository`), schema setup, and explicit SQL queries.
   - Accepts an injectable database path (`Path | str`) so tests run against temporary files or `:memory:`.
 - **`nyatodo.service`**:
-  - Application use cases (`TodoService`): **Task** lifecycle, concurrent **Task Timers**, **Thinking Space** operations, **Daily Summary** aggregation, and idle trim handling.
+  - Application use cases (`TodoService`): **Task** lifecycle, concurrent **Task Timers**, **Thinking Space** operations, **Activity Summary** aggregation, and idle trim handling.
   - Accepts injectable repository, clock, and `PlatformBridge` dependencies.
 - **`nyatodo.platform_win32`**:
   - Platform abstraction (`PlatformBridge` protocol) and Win32 `ctypes` implementation (`RegisterHotKey`, `GetLastInputInfo`, system theme query).
@@ -50,7 +50,8 @@ Use the exact terms defined in [GLOSSARY.md](GLOSSARY.md) across symbols, module
 - `SubStep` / **Sub-step** (avoid: sub-task, child ticket, checklist card)
 - `TaskTimer` (avoid: focus lock, Pomodoro clock)
 - `WorkSession` (avoid: timesheet, billable entry, Pomodoro)
-- `DailySummary` (avoid: standup report, export, timesheet)
+- `ActivitySummary` / **Activity Summary** (avoid: Daily Summary, standup report, export, timesheet)
+- `Work Week` (Monday through Sunday; avoid: business week, Monday-to-Friday week)
 
 ---
 

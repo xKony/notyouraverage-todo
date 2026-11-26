@@ -2,22 +2,38 @@
 
 import sys
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
 from typing import Literal
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QByteArray, QPoint, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QAbstractNativeEventFilter,
+    QByteArray,
+    QEvent,
+    QObject,
+    QPoint,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QCursor,
     QFont,
+    QFontMetrics,
     QGuiApplication,
+    QIcon,
     QKeyEvent,
     QMouseEvent,
+    QPainter,
+    QPixmap,
     QResizeEvent,
+    QWindow,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -31,22 +47,36 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nyatodo.domain import Settings, Task, TaskStatus
+from nyatodo.domain import (
+    AutoHideDelay,
+    Settings,
+    SummaryPeriod,
+    Task,
+    TaskDateFilter,
+    TaskDateFilterMode,
+    TaskSortMode,
+    TaskStatus,
+)
 from nyatodo.parser import is_search_input
 from nyatodo.platform_win32 import extract_hotkey_id_from_native_message
 from nyatodo.service import TodoService
+from nyatodo.ui.filter_popover import TaskFilterPopover
 from nyatodo.ui.hints_footer import HintContext, HintsFooter
 from nyatodo.ui.icons import (
     create_cat_monogram_pixmap,
     create_check_pixmap,
     create_chevron_icon,
+    create_filter_icon,
     create_gear_icon,
 )
 from nyatodo.ui.idle_banner import IdleBanner
+from nyatodo.ui.pill_widgets import PulsingDot, draw_vector_glyph
 from nyatodo.ui.qt_helpers import clear_layout, set_qss_property
 from nyatodo.ui.quick_bar import QuickBar
+from nyatodo.ui.requester_popover import RequesterPopover
 from nyatodo.ui.settings_dialog import SettingsOverlay
-from nyatodo.ui.summary_view import DailySummaryView
+from nyatodo.ui.summary_period_modal import SummaryPeriodModal
+from nyatodo.ui.summary_view import ActivitySummaryView
 from nyatodo.ui.task_row import TaskRowWidget
 from nyatodo.ui.theme import (
     DARK_TOKENS,
@@ -57,7 +87,14 @@ from nyatodo.ui.theme import (
     make_ui_font,
     resolve_theme,
 )
-from nyatodo.ui.thinking_space import ThinkingSpaceWidget
+from nyatodo.ui.thinking_space import ThinkingField, ThinkingSpaceWidget
+
+_DIRECT_EDIT_SHORTCUTS: dict[int, ThinkingField] = {
+    Qt.Key.Key_N: ThinkingField.NOTES,
+    Qt.Key.Key_S: ThinkingField.SUB_STEP,
+    Qt.Key.Key_R: ThinkingField.REQUESTER,
+    Qt.Key.Key_E: ThinkingField.TITLE,
+}
 
 
 class ViewTab(StrEnum):
@@ -83,8 +120,8 @@ class HotkeyEventFilter(QAbstractNativeEventFilter):
     ) -> object:
         if sys.platform != "win32":
             return False, 0
-        raw_type = eventType.data() if isinstance(eventType, QByteArray) else bytes(eventType)
-        if raw_type != b"windows_generic_msg":
+        raw_type = bytes(eventType.data() if isinstance(eventType, QByteArray) else eventType)
+        if raw_type.lower() != b"windows_generic_msg":
             return False, 0
         hotkey_id = extract_hotkey_id_from_native_message(message)
         if hotkey_id is not None and hotkey_id == self._hotkey_id:
@@ -153,10 +190,18 @@ class MainWindow(QWidget):
 
         self._tokens: ColorTokens = DARK_TOKENS
         self._current_tab = ViewTab.ACTIVE
+        self._doing_only = False
+        self._requester_filter: str | None = None
+        self._sort_mode: TaskSortMode = TaskSortMode.MANUAL
+        self._date_filter: TaskDateFilter = TaskDateFilter(TaskDateFilterMode.ANY)
         self._selected_task_id: str | None = None
         self._expanded_task_id: str | None = None
-        self._summary_day: date = self._clock().astimezone().date()
+        self._summary_period: SummaryPeriod = SummaryPeriod.day(self._service.local_today())
         self._row_widgets: dict[str, TaskRowWidget] = {}
+        self._all_requesters: list[str] = []
+        self._requester_pill_buttons: list[QPushButton] = []
+        self.requester_overflow_btn: QPushButton | None = None
+        self._last_tabs_width: int = -1
         self._thinking_widget: ThinkingSpaceWidget | None = None
         self._empty_glyph_label: QLabel | None = None
         self._drag_offset: QPoint | None = None
@@ -165,6 +210,7 @@ class MainWindow(QWidget):
         self._is_compact: bool = start_compact
         self._applying_mode = False
         self._full_size = QSize(540, 640)
+        self._auto_hide_delay = AutoHideDelay.THREE_SEC
 
         load_bundled_fonts()
         self._configure_window()
@@ -175,10 +221,18 @@ class MainWindow(QWidget):
         self._added_timer.setInterval(1500)
         self._added_timer.timeout.connect(lambda: self.added_feedback_pill.setVisible(False))
 
+        self.focus_loss_timer = QTimer(self)
+        self.focus_loss_timer.setSingleShot(True)
+        self.focus_loss_timer.timeout.connect(self._on_focus_loss_timeout)
+
         self.tick_timer = QTimer(self)
         self.tick_timer.setInterval(1000)
         self.tick_timer.timeout.connect(self.on_tick)
         self.tick_timer.start()
+
+        gui_app = QGuiApplication.instance()
+        if isinstance(gui_app, QGuiApplication):
+            gui_app.focusWindowChanged.connect(self._on_focus_window_changed)
 
         self.apply_settings(self._service.get_settings())
         self._apply_compact_mode(self._is_compact)
@@ -242,6 +296,19 @@ class MainWindow(QWidget):
         self.settings_overlay.settings_changed.connect(self._on_settings_changed)
         self.settings_overlay.closed.connect(self._on_settings_closed)
 
+        self.summary_period_modal = SummaryPeriodModal(self.shell)
+        self.summary_period_modal.period_selected.connect(self._on_summary_period_changed)
+        self.summary_period_modal.closed.connect(self._on_summary_period_modal_closed)
+
+        self.filter_popover = TaskFilterPopover(self.shell)
+        self.filter_popover.set_toggle_button(self.filter_sort_btn)
+        self.filter_popover.filter_changed.connect(self._on_filter_sort_changed)
+        self.filter_popover.closed.connect(self._on_filter_popover_closed)
+
+        self.requester_popover = RequesterPopover(self.shell)
+        self.requester_popover.requester_selected.connect(self._on_requester_popover_selected)
+        self.requester_popover.closed.connect(self._on_filter_popover_closed)
+
     def _build_header(self, parent: QWidget) -> QFrame:
         self.header_bar = QFrame(parent)
         self.header_bar.setObjectName("HeaderBar")
@@ -256,8 +323,25 @@ class MainWindow(QWidget):
 
         self.brand_wordmark = QLabel("nyatodo", self.header_bar)
         self.brand_wordmark.setObjectName("BrandWordmark")
-        self.brand_wordmark.setFont(make_ui_font(13, QFont.Weight.DemiBold))
+        self.brand_wordmark.setFont(make_ui_font(12, QFont.Weight.Light))
+        self.brand_wordmark.setVisible(False)
         header_layout.addWidget(self.brand_wordmark)
+
+        self.running_timer_pill = _RunningTimerPill(self.header_bar)
+        self.running_timer_pill.setVisible(False)
+        pill_layout = QHBoxLayout(self.running_timer_pill)
+        pill_layout.setContentsMargins(8, 0, 10, 0)
+        pill_layout.setSpacing(6)
+        self.running_pill_dot = PulsingDot(
+            QColor(self._tokens.status_doing), size=12, active=True, parent=self.running_timer_pill
+        )
+        pill_layout.addWidget(self.running_pill_dot)
+        self.running_pill_text = QLabel("00:00:00", self.running_timer_pill)
+        self.running_pill_text.setObjectName("RunningTimerPillText")
+        self.running_pill_text.setFont(make_ui_font(11, QFont.Weight.DemiBold))
+        pill_layout.addWidget(self.running_pill_text)
+        self.running_timer_pill.clicked.connect(self._jump_to_running_task)
+        header_layout.addWidget(self.running_timer_pill)
 
         self.added_feedback_pill = QLabel("Added", self.header_bar)
         self.added_feedback_pill.setObjectName("AddedFeedbackPill")
@@ -269,25 +353,10 @@ class MainWindow(QWidget):
 
         header_layout.addStretch(1)
 
-        self.running_timer_pill = _RunningTimerPill(self.header_bar)
-        self.running_timer_pill.setVisible(False)
-        pill_layout = QHBoxLayout(self.running_timer_pill)
-        pill_layout.setContentsMargins(10, 0, 10, 0)
-        pill_layout.setSpacing(6)
-        self.running_pill_dot = QFrame(self.running_timer_pill)
-        self.running_pill_dot.setFixedSize(6, 6)
-        pill_layout.addWidget(self.running_pill_dot)
-        self.running_pill_text = QLabel("00:00:00", self.running_timer_pill)
-        self.running_pill_text.setObjectName("RunningTimerPillText")
-        self.running_pill_text.setFont(make_ui_font(11, QFont.Weight.DemiBold))
-        pill_layout.addWidget(self.running_pill_text)
-        self.running_timer_pill.clicked.connect(self._jump_to_running_task)
-        header_layout.addWidget(self.running_timer_pill)
-
         self.expand_button = QPushButton(self.header_bar)
         self.expand_button.setObjectName("ExpandToggleButton")
-        self.expand_button.setFixedSize(28, 28)
-        self.expand_button.setIconSize(QSize(14, 14))
+        self.expand_button.setFixedSize(26, 26)
+        self.expand_button.setIconSize(QSize(13, 13))
         self.expand_button.setToolTip("Expand workspace")
         self.expand_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.expand_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -296,8 +365,8 @@ class MainWindow(QWidget):
 
         self.settings_button = QPushButton(self.header_bar)
         self.settings_button.setObjectName("SettingsButton")
-        self.settings_button.setFixedSize(28, 28)
-        self.settings_button.setIconSize(QSize(16, 16))
+        self.settings_button.setFixedSize(26, 26)
+        self.settings_button.setIconSize(QSize(14, 14))
         self.settings_button.setToolTip("Settings (Ctrl+,)")
         self.settings_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -308,26 +377,69 @@ class MainWindow(QWidget):
     def _build_tabs(self, parent: QWidget) -> QFrame:
         self.tabs_frame = QFrame(parent)
         self.tabs_frame.setObjectName("SegmentedTabs")
-        self.tabs_frame.setFixedHeight(32)
-        tabs_layout = QHBoxLayout(self.tabs_frame)
-        tabs_layout.setContentsMargins(3, 3, 3, 3)
-        tabs_layout.setSpacing(2)
+        self.tabs_frame.setFixedHeight(30)
+        self._tabs_layout = QHBoxLayout(self.tabs_frame)
+        self._tabs_layout.setContentsMargins(0, 2, 0, 2)
+        self._tabs_layout.setSpacing(6)
 
-        self.active_tab_btn = QPushButton("1 Active  0", self.tabs_frame)
-        self.waiting_tab_btn = QPushButton("2 Waiting  0", self.tabs_frame)
-        self.summary_tab_btn = QPushButton("3 Summary", self.tabs_frame)
+        self.active_tab_btn = QPushButton("0", self.tabs_frame)
+        self.doing_filter_btn = QPushButton("", self.tabs_frame)
+        self.waiting_tab_btn = QPushButton("0", self.tabs_frame)
+        self.summary_tab_btn = QPushButton("", self.tabs_frame)
+
+        self.active_tab_btn.setProperty("kind", "all")
+        self.doing_filter_btn.setProperty("kind", "doing")
+        self.waiting_tab_btn.setProperty("kind", "waiting")
+        self.summary_tab_btn.setProperty("kind", "summary")
+
         self._tab_buttons: dict[ViewTab, QPushButton] = {
             ViewTab.ACTIVE: self.active_tab_btn,
             ViewTab.WAITING: self.waiting_tab_btn,
             ViewTab.SUMMARY: self.summary_tab_btn,
         }
-        for tab_val, btn in self._tab_buttons.items():
+        for btn in (
+            self.active_tab_btn,
+            self.doing_filter_btn,
+            self.waiting_tab_btn,
+            self.summary_tab_btn,
+        ):
             btn.setObjectName("SegmentTabButton")
             btn.setFixedHeight(26)
+            btn.setIconSize(QSize(11, 11))
+            btn.setFont(make_ui_font(11, QFont.Weight.Medium))
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _checked=False, t=tab_val: self.switch_tab(t))
-            tabs_layout.addWidget(btn, 1)
+
+        self.active_tab_btn.clicked.connect(self._on_all_pill_clicked)
+        self.doing_filter_btn.clicked.connect(self._on_doing_pill_clicked)
+        self.waiting_tab_btn.clicked.connect(lambda: self.switch_tab(ViewTab.WAITING))
+        self.summary_tab_btn.clicked.connect(lambda: self.switch_tab(ViewTab.SUMMARY))
+
+        self.requester_pills_host = QWidget(self.tabs_frame)
+        self.requester_pills_host.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+        )
+        self.requester_pills_layout = QHBoxLayout(self.requester_pills_host)
+        self.requester_pills_layout.setContentsMargins(0, 0, 0, 0)
+        self.requester_pills_layout.setSpacing(6)
+
+        self.filter_sort_btn = QPushButton(self.tabs_frame)
+        self.filter_sort_btn.setObjectName("FilterSortButton")
+        self.filter_sort_btn.setFixedSize(28, 26)
+        self.filter_sort_btn.setIconSize(QSize(14, 14))
+        self.filter_sort_btn.setToolTip("Filter & Sort")
+        self.filter_sort_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.filter_sort_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.filter_sort_btn.clicked.connect(self._toggle_filter_popover)
+
+        self._tabs_layout.addWidget(self.active_tab_btn)
+        self._tabs_layout.addWidget(self.doing_filter_btn)
+        self._tabs_layout.addWidget(self.waiting_tab_btn)
+        self._tabs_layout.addWidget(self.requester_pills_host)
+        self._tabs_layout.addStretch(1)
+        self._tabs_layout.addWidget(self.filter_sort_btn)
+        self._tabs_layout.addWidget(self.summary_tab_btn)
+        self.tabs_frame.installEventFilter(self)
         return self.tabs_frame
 
     def _build_body_stack(self, parent: QWidget) -> QStackedWidget:
@@ -342,13 +454,14 @@ class MainWindow(QWidget):
         )
         self.task_list_layout = QVBoxLayout(self.task_list_container)
         self.task_list_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-        self.task_list_layout.setContentsMargins(0, 0, 0, 0)
-        self.task_list_layout.setSpacing(2)
+        self.task_list_layout.setContentsMargins(0, 2, 0, 8)
+        self.task_list_layout.setSpacing(5)
         self.task_scroll.setWidget(self.task_list_container)
         self.stack.addWidget(self.task_scroll)
 
-        self.summary_view = DailySummaryView(self.stack)
-        self.summary_view.day_changed.connect(self._on_summary_day_changed)
+        self.summary_view = ActivitySummaryView(self.stack)
+        self.summary_view.period_changed.connect(self._on_summary_period_changed)
+        self.summary_view.period_picker_requested.connect(self.open_summary_period_modal)
         self.stack.addWidget(self.summary_view)
         return self.stack
 
@@ -390,6 +503,10 @@ class MainWindow(QWidget):
         """Return ordered Task IDs currently visible in the Task List."""
         return list(self._row_widgets.keys())
 
+    def requester_filter(self) -> str | None:
+        """Return active Requester filter name, or None when unfiltered."""
+        return self._requester_filter
+
     def is_compact(self) -> bool:
         """Return True when the window is in Compact Spotlight Mode."""
         return self._is_compact
@@ -401,22 +518,28 @@ class MainWindow(QWidget):
         self.setStyleSheet(build_stylesheet(tokens))
 
         self.brand_icon_label.setPixmap(create_cat_monogram_pixmap(18, QColor(tokens.text_primary)))
-        self.running_pill_dot.setStyleSheet(
-            f"background-color: {tokens.status_doing}; border-radius: 3px;"
-        )
+        self.running_pill_dot.set_state(QColor(tokens.status_doing), True)
         self._refresh_expand_button_icon()
-        self.settings_button.setIcon(create_gear_icon(QColor(tokens.text_secondary), 16))
+        self.settings_button.setIcon(create_gear_icon(QColor(tokens.text_secondary), 14))
+        self._refresh_filter_pill_icons()
 
         self.quick_bar.apply_theme(tokens)
         self.idle_banner.apply_theme(tokens)
         self.summary_view.apply_theme(tokens)
         self.settings_overlay.apply_theme(tokens)
+        self.summary_period_modal.apply_theme(tokens)
+        self.filter_popover.apply_theme(tokens)
+        self.requester_popover.apply_theme(tokens)
         for row in self._row_widgets.values():
             row.apply_theme(tokens)
         if self._thinking_widget is not None:
             self._thinking_widget.apply_theme(tokens)
         if self._empty_glyph_label is not None:
             self._empty_glyph_label.setPixmap(create_check_pixmap(QColor(tokens.text_muted), 20))
+
+        self._auto_hide_delay = settings.auto_hide_delay
+        if self._auto_hide_delay.seconds is None or self.isActiveWindow():
+            self.focus_loss_timer.stop()
 
         self.hints_footer.set_hints_enabled(settings.show_shortcut_hints)
         if self._is_compact:
@@ -445,6 +568,7 @@ class MainWindow(QWidget):
         self._activate_and_focus_quick_bar()
 
     def _activate_and_focus_quick_bar(self) -> None:
+        self.focus_loss_timer.stop()
         self.setWindowState(
             (self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive
         )
@@ -456,6 +580,13 @@ class MainWindow(QWidget):
 
     def hide_to_tray(self) -> None:
         """Flush any open Thinking Space edits and hide window."""
+        self.focus_loss_timer.stop()
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+        if self.requester_popover.isVisible():
+            self.requester_popover.close_popover()
+        if self.summary_period_modal.isVisible():
+            self.summary_period_modal.close_modal()
         self.flush_pending_saves()
         self._added_timer.stop()
         self.added_feedback_pill.setVisible(False)
@@ -493,6 +624,12 @@ class MainWindow(QWidget):
             return
         if self.settings_overlay.isVisible():
             self.settings_overlay.close_modal()
+        if self.summary_period_modal.isVisible():
+            self.summary_period_modal.close_modal()
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+        if self.requester_popover.isVisible():
+            self.requester_popover.close_popover()
         self.flush_pending_saves()
         self._apply_compact_mode(True)
         self.quick_bar.focus_input()
@@ -505,8 +642,8 @@ class MainWindow(QWidget):
             self.collapse_to_spotlight()
 
     def _compute_compact_height(self) -> int:
-        # top(6) + header(32) + spacing(6) + quick_bar(38) + bottom(6) + shell border(2) = 90
-        base_height = 90
+        # top(5) + header(32) + spacing(6) + quick_bar(42) + bottom(5) + shell border(2) = 92
+        base_height = 92
         hints_height = 20 if self.hints_footer.hints_enabled() else 0
         return base_height + hints_height
 
@@ -529,7 +666,7 @@ class MainWindow(QWidget):
 
             if compact:
                 self.idle_banner.setVisible(False)
-                self.content_layout.setContentsMargins(16, 6, 16, 6)
+                self.content_layout.setContentsMargins(16, 5, 16, 5)
                 self.content_layout.setSpacing(6)
                 compact_h = self._compute_compact_height()
                 self.setMinimumSize(460, compact_h)
@@ -563,13 +700,17 @@ class MainWindow(QWidget):
         self._refresh_expand_button_icon()
 
     def switch_tab(self, tab: ViewTab) -> None:
-        """Switch between Active, Waiting, and Daily Summary tabs."""
+        """Switch between Active, Waiting, and Activity Summary tabs."""
         if self._is_compact:
             self.expand_workspace()
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+        if tab != ViewTab.SUMMARY and self.summary_period_modal.isVisible():
+            self.summary_period_modal.close_modal()
         self.flush_pending_saves()
         self._current_tab = tab
         if tab == ViewTab.SUMMARY:
-            self._summary_day = self._clock().astimezone().date()
+            self._summary_period = SummaryPeriod.day(self._service.local_today())
             self.stack.setCurrentWidget(self.summary_view)
         else:
             self.stack.setCurrentWidget(self.task_scroll)
@@ -580,10 +721,27 @@ class MainWindow(QWidget):
         """Open the centered Settings modal overlay."""
         if self._is_compact:
             self.expand_workspace()
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+        if self.summary_period_modal.isVisible():
+            self.summary_period_modal.close_modal()
         if (layout := self.layout()) is not None:
             layout.activate()
         self.flush_pending_saves()
         self.settings_overlay.open_with_settings(self._service.get_settings())
+
+    def open_summary_period_modal(self) -> None:
+        """Open the centered Activity Summary period selector modal."""
+        if self._is_compact:
+            self.expand_workspace()
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+        if (layout := self.layout()) is not None:
+            layout.activate()
+        self.summary_period_modal.open_with_period(
+            self._summary_period,
+            today=self._service.local_today(),
+        )
 
     def check_idle_once(self) -> None:
         """Poll TodoService for resumed-after-idle gaps and surface IdleBanner."""
@@ -612,10 +770,11 @@ class MainWindow(QWidget):
             row.refresh_timer(now=now)
         if self._thinking_widget is not None:
             self._thinking_widget.refresh_timer(now=now)
-        if self._current_tab == ViewTab.SUMMARY and self._summary_day == now.astimezone().date():
+        today = self._service.local_today()
+        if self._current_tab == ViewTab.SUMMARY and self._summary_period.contains_date(today):
             self.summary_view.set_summary(
-                self._service.get_daily_summary(self._summary_day),
-                today=self._summary_day,
+                self._service.get_activity_summary(self._summary_period),
+                today=today,
             )
         self.check_idle_once()
         self.state_changed.emit()
@@ -623,19 +782,38 @@ class MainWindow(QWidget):
     def refresh_views(self) -> None:
         """Re-query TodoService and synchronize header pill, tab counts, list, or summary."""
         now = self._clock()
-        active_tasks = self._service.list_active_tasks()
-        waiting_tasks = self._service.list_waiting_tasks()
+        active_tasks = self._service.list_active_tasks(
+            sort_mode=self._sort_mode,
+            date_filter=self._date_filter,
+        )
+        waiting_tasks = self._service.list_waiting_tasks(
+            sort_mode=self._sort_mode,
+            date_filter=self._date_filter,
+        )
 
-        self.active_tab_btn.setText(f"1 Active  {len(active_tasks)}")
-        self.waiting_tab_btn.setText(f"2 Waiting  {len(waiting_tasks)}")
-        for tab_val, btn in self._tab_buttons.items():
-            set_qss_property(btn, "active", tab_val == self._current_tab)
+        self.active_tab_btn.setText(f"{len(active_tasks)}")
+        self.waiting_tab_btn.setText(f"{len(waiting_tasks)}")
+        all_active = (
+            self._current_tab == ViewTab.ACTIVE
+            and not self._doing_only
+            and self._requester_filter is None
+        )
+        set_qss_property(self.active_tab_btn, "active", all_active)
+        set_qss_property(
+            self.doing_filter_btn,
+            "active",
+            self._current_tab == ViewTab.ACTIVE and self._doing_only,
+        )
+        set_qss_property(self.waiting_tab_btn, "active", self._current_tab == ViewTab.WAITING)
+        set_qss_property(self.summary_tab_btn, "active", self._current_tab == ViewTab.SUMMARY)
+        self._rebuild_requester_pills([*active_tasks, *waiting_tasks])
+        self._refresh_filter_pill_icons()
 
         self._refresh_header_timer_pill(now=now)
 
         if self._current_tab == ViewTab.SUMMARY:
-            today = now.astimezone().date()
-            summary = self._service.get_daily_summary(self._summary_day)
+            today = self._service.local_today()
+            summary = self._service.get_activity_summary(self._summary_period)
             self.summary_view.set_summary(summary, today=today)
             self.state_changed.emit()
             return
@@ -644,9 +822,66 @@ class MainWindow(QWidget):
         self._rebuild_task_list(tasks, now=now)
         self.state_changed.emit()
 
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            watched is self.tabs_frame
+            and event.type() == QEvent.Type.Resize
+            and self._all_requesters
+            and self.tabs_frame.isVisible()
+            and self.tabs_frame.width() != self._last_tabs_width
+        ):
+            self._layout_requester_pills()
+        return super().eventFilter(watched, event)
+
+    def event(self, event: QEvent) -> bool:
+        etype = event.type()
+        if etype == QEvent.Type.WindowDeactivate:
+            self._schedule_auto_hide()
+        elif etype == QEvent.Type.WindowActivate:
+            self.focus_loss_timer.stop()
+        return super().event(event)
+
+    def _on_focus_window_changed(self, focus_window: QWindow | None) -> None:
+        if focus_window is not None and focus_window == self.windowHandle():
+            self.focus_loss_timer.stop()
+            return
+        if focus_window is None or not self.isActiveWindow():
+            self._schedule_auto_hide()
+
+    def _can_auto_hide(self) -> bool:
+        if not self.isVisible():
+            return False
+        if QApplication.activePopupWidget() is not None:
+            return False
+        if QApplication.activeModalWidget() is not None:
+            return False
+        return not self.settings_overlay.is_capturing_shortcut()
+
+    def _schedule_auto_hide(self) -> None:
+        delay_seconds = self._auto_hide_delay.seconds
+        if delay_seconds is None or not self._can_auto_hide():
+            return
+        self.focus_loss_timer.start(delay_seconds * 1000)
+
+    def _on_focus_loss_timeout(self) -> None:
+        if self.isActiveWindow() or not self._can_auto_hide():
+            return
+        self.hide_to_tray()
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if self.settings_overlay.isVisible():
             self.settings_overlay.keyPressEvent(event)
+            return
+        if self.summary_period_modal.isVisible():
+            self.summary_period_modal.keyPressEvent(event)
+            return
+        if self.filter_popover.isVisible() and event.key() == Qt.Key.Key_Escape:
+            self.filter_popover.close_popover()
+            event.accept()
+            return
+        if self.requester_popover.isVisible() and event.key() == Qt.Key.Key_Escape:
+            self.requester_popover.close_popover()
+            event.accept()
             return
 
         key = event.key()
@@ -669,11 +904,11 @@ class MainWindow(QWidget):
 
         if self._current_tab == ViewTab.SUMMARY and not self.quick_bar.has_input_focus():
             if key == Qt.Key.Key_Left:
-                self.summary_view.go_previous_day()
+                self.summary_view.go_previous_period()
                 event.accept()
                 return
             if key == Qt.Key.Key_Right:
-                self.summary_view.go_next_day()
+                self.summary_view.go_next_period()
                 event.accept()
                 return
             if key in (Qt.Key.Key_1, Qt.Key.Key_2, Qt.Key.Key_3):
@@ -717,6 +952,18 @@ class MainWindow(QWidget):
             if (layout := self.layout()) is not None:
                 layout.activate()
             self.settings_overlay.setGeometry(self.shell.rect())
+        if self.summary_period_modal.isVisible():
+            if (layout := self.layout()) is not None:
+                layout.activate()
+            self.summary_period_modal.setGeometry(self.shell.rect())
+        if self.filter_popover.isVisible():
+            self.filter_popover.reposition(self.filter_sort_btn)
+        if self._all_requesters:
+            self._layout_requester_pills()
+        if self.requester_popover.isVisible() and self.requester_overflow_btn is not None:
+            self.requester_popover.reposition(self.requester_overflow_btn)
+        elif self.requester_popover.isVisible():
+            self.requester_popover.close_popover()
 
     def _position_for_show(self, *, compact: bool = False) -> None:
         if self._user_moved and self._last_position is not None:
@@ -743,7 +990,12 @@ class MainWindow(QWidget):
             return self._service.search_tasks(raw, include_done=False)
         if self._current_tab == ViewTab.WAITING:
             return waiting_tasks
-        return active_tasks
+        tasks = active_tasks
+        if self._doing_only:
+            tasks = [t for t in tasks if t.status == TaskStatus.DOING]
+        if self._requester_filter is not None:
+            tasks = [t for t in tasks if t.requester == self._requester_filter]
+        return tasks
 
     def _rebuild_task_list(self, tasks: list[Task], *, now: datetime) -> None:
         focused_name: str | None = None
@@ -775,11 +1027,14 @@ class MainWindow(QWidget):
                 now=now,
                 tokens=self._tokens,
                 selected=is_selected,
+                local_tz=self._service.local_tz,
                 parent=self.task_list_container,
             )
             row.clicked.connect(self._on_row_clicked)
             row.double_clicked.connect(self._on_row_double_clicked)
             row.status_clicked.connect(self._on_row_status_clicked)
+            row.timer_clicked.connect(self._on_row_timer_clicked)
+            row.wait_clicked.connect(self._on_row_wait_clicked)
             row.delete_requested.connect(self._on_row_delete_requested)
             self._row_widgets[task.id] = row
             self.task_list_layout.addWidget(row)
@@ -790,6 +1045,7 @@ class MainWindow(QWidget):
                     task,
                     now=now,
                     tokens=self._tokens,
+                    local_tz=self._service.local_tz,
                     parent=self.task_list_container,
                 )
                 self._connect_thinking_space(thinking)
@@ -803,6 +1059,7 @@ class MainWindow(QWidget):
             target = self._thinking_widget.findChild(QWidget, focused_name)
             if target is not None:
                 target.setFocus(Qt.FocusReason.OtherFocusReason)
+                self._scroll_focused_thinking_field_into_view(self._thinking_widget)
 
     def _build_empty_state(self) -> QWidget:
         box = QWidget(self.task_list_container)
@@ -818,24 +1075,17 @@ class MainWindow(QWidget):
         layout.addWidget(glyph)
 
         if self.quick_bar.text().strip():
-            title_text = "No matching tasks"
-            hint_text = "Press Enter to create a new Task or Esc to clear."
+            title_text = "No matches"
         elif self._current_tab == ViewTab.WAITING:
-            title_text = "No waiting tasks"
-            hint_text = "Press w on a selected Task to mark it Waiting."
+            title_text = "Nothing waiting"
         else:
-            title_text = "No active tasks"
-            hint_text = "Press Ctrl+L or click above to add a task."
+            title_text = "All clear"
 
         title = QLabel(title_text, box)
         title.setObjectName("EmptyStateTitle")
+        title.setFont(make_ui_font(13, QFont.Weight.Light))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
-
-        hint = QLabel(hint_text, box)
-        hint.setObjectName("EmptyStateHint")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(hint)
         return box
 
     def _connect_thinking_space(self, widget: ThinkingSpaceWidget) -> None:
@@ -852,6 +1102,10 @@ class MainWindow(QWidget):
         widget.manual_session_requested.connect(self._on_thinking_manual_session_requested)
         widget.session_deleted.connect(self._on_thinking_session_deleted)
         widget.collapse_requested.connect(self._collapse_thinking_space)
+        widget.expand_finished.connect(
+            partial(self._scroll_focused_thinking_field_into_view, widget)
+        )
+        widget.editor_focus_changed.connect(self._update_hints_context)
 
     def _refresh_header_timer_pill(self, *, now: datetime) -> None:
         running = self._service.get_running_tasks()
@@ -908,19 +1162,44 @@ class MainWindow(QWidget):
         new_idx = max(0, min(len(ids) - 1, idx + step))
         self._select_task(ids[new_idx])
 
-    def _expand_task(self, task_id: str, *, open_manual: bool = False) -> None:
+    def _scroll_focused_thinking_field_into_view(self, widget: ThinkingSpaceWidget) -> None:
+        if self._thinking_widget is not widget:
+            return
+        widget.updateGeometry()
+        if (layout := self.task_list_container.layout()) is not None:
+            layout.activate()
+        self.task_list_container.adjustSize()
+        focus_widget = self.focusWidget()
+        if focus_widget is not None and widget.isAncestorOf(focus_widget):
+            self.task_scroll.ensureWidgetVisible(focus_widget, 0, 16)
+        else:
+            self.task_scroll.ensureWidgetVisible(widget, 0, 16)
+
+    def _expand_task(
+        self,
+        task_id: str,
+        *,
+        open_manual: bool = False,
+        focus_field: ThinkingField | None = None,
+    ) -> None:
         if self._expanded_task_id != task_id:
             self.flush_pending_saves()
             self._expanded_task_id = task_id
             self.refresh_views()
-            if open_manual and self._thinking_widget is not None:
-                self._thinking_widget.open_manual_entry()
             if self._thinking_widget is not None:
+                if open_manual:
+                    self._thinking_widget.open_manual_entry()
                 self._thinking_widget.animate_expand()
+                if focus_field is not None:
+                    self._thinking_widget.focus_field(focus_field)
             self._update_hints_context()
             return
-        if open_manual and self._thinking_widget is not None:
-            self._thinking_widget.open_manual_entry()
+        if self._thinking_widget is not None:
+            if open_manual:
+                self._thinking_widget.open_manual_entry()
+            elif focus_field is not None:
+                self._thinking_widget.focus_field(focus_field)
+            self._scroll_focused_thinking_field_into_view(self._thinking_widget)
             self._update_hints_context()
 
     def _toggle_expand_selected(self) -> None:
@@ -949,6 +1228,15 @@ class MainWindow(QWidget):
     def _handle_escape(self) -> None:
         if self.settings_overlay.isVisible():
             self.settings_overlay.cancel_capture_or_close()
+            return
+        if self.summary_period_modal.isVisible():
+            self.summary_period_modal.close_modal()
+            return
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+            return
+        if self.requester_popover.isVisible():
+            self.requester_popover.close_popover()
             return
         if self._expanded_task_id is not None:
             self._collapse_thinking_space()
@@ -998,7 +1286,7 @@ class MainWindow(QWidget):
             return
 
         if mods & Qt.KeyboardModifier.AltModifier and key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-            if self._selected_task_id is not None:
+            if self._selected_task_id is not None and self._sort_mode == TaskSortMode.MANUAL:
                 direction = -1 if key == Qt.Key.Key_Up else 1
                 self._service.reorder_task(self._selected_task_id, direction)
                 self.refresh_views()
@@ -1034,6 +1322,11 @@ class MainWindow(QWidget):
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) and self._selected_task_id is not None:
             self._expand_task(self._selected_task_id, open_manual=True)
             event.accept()
+        elif (
+            focus_field := _DIRECT_EDIT_SHORTCUTS.get(key)
+        ) is not None and self._selected_task_id is not None:
+            self._expand_task(self._selected_task_id, focus_field=focus_field)
+            event.accept()
         elif key in (Qt.Key.Key_1, Qt.Key.Key_2, Qt.Key.Key_3):
             self._switch_tab_by_number(key)
             event.accept()
@@ -1061,6 +1354,287 @@ class MainWindow(QWidget):
     def _on_row_status_clicked(self, task_id: str) -> None:
         self._service.toggle_done(task_id)
         self.refresh_views()
+
+    def _on_row_timer_clicked(self, task_id: str) -> None:
+        self._service.toggle_timer(task_id)
+        self.refresh_views()
+
+    def _on_row_wait_clicked(self, task_id: str) -> None:
+        self._service.toggle_waiting(task_id)
+        self.refresh_views()
+
+    def _on_all_pill_clicked(self) -> None:
+        self._doing_only = False
+        self._requester_filter = None
+        self.switch_tab(ViewTab.ACTIVE)
+
+    def _on_doing_pill_clicked(self) -> None:
+        self._doing_only = not (self._current_tab == ViewTab.ACTIVE and self._doing_only)
+        self._requester_filter = None
+        self.switch_tab(ViewTab.ACTIVE)
+
+    def _on_requester_pill_clicked(self, requester: str) -> None:
+        if self._current_tab == ViewTab.ACTIVE and self._requester_filter == requester:
+            self._requester_filter = None
+        else:
+            self._requester_filter = requester
+            self._doing_only = False
+        self.switch_tab(ViewTab.ACTIVE)
+
+    def _rebuild_requester_pills(self, tasks: list[Task]) -> None:
+        requesters: list[str] = []
+        for task in tasks:
+            if task.requester and task.requester not in requesters:
+                requesters.append(task.requester)
+        self._all_requesters = requesters
+        if self._requester_filter is not None and self._requester_filter not in requesters:
+            self._requester_filter = None
+        self._layout_requester_pills()
+
+    def _available_requester_bar_width(self) -> int:
+        tabs_w = (
+            self.tabs_frame.width()
+            if self.tabs_frame.isVisible() and self.tabs_frame.width() > 100
+            else max(460, self.width()) - 34
+        )
+        self._last_tabs_width = self.tabs_frame.width() if self.tabs_frame.isVisible() else -1
+        left_w = (
+            self.active_tab_btn.sizeHint().width()
+            + self.doing_filter_btn.sizeHint().width()
+            + self.waiting_tab_btn.sizeHint().width()
+        )
+        right_w = self.filter_sort_btn.width() + self.summary_tab_btn.sizeHint().width()
+        return max(0, tabs_w - left_w - right_w - 30)
+
+    @staticmethod
+    def _format_requester_pill(
+        requester: str,
+        metrics: QFontMetrics,
+        max_pill_w: int,
+    ) -> tuple[str, int]:
+        chrome_w = 28
+        raw = f"@{requester}"
+        full_w = metrics.horizontalAdvance(raw) + chrome_w
+        if full_w <= max_pill_w:
+            return raw, full_w
+        elided = metrics.elidedText(
+            raw, Qt.TextElideMode.ElideRight, max(20, max_pill_w - chrome_w)
+        )
+        pill_w = min(max_pill_w, metrics.horizontalAdvance(elided) + chrome_w)
+        return elided, pill_w
+
+    def _layout_requester_pills(self) -> None:
+        self._requester_pill_buttons.clear()
+        self.requester_overflow_btn = None
+        self.requester_popover.set_toggle_button(None)
+        clear_layout(self.requester_pills_layout)
+
+        if not self._all_requesters:
+            self.requester_pills_host.setVisible(False)
+            self.requester_pills_host.setFixedWidth(0)
+            return
+        self.requester_pills_host.setVisible(True)
+
+        pill_font = make_ui_font(10, QFont.Weight.Medium)
+        metrics = QFontMetrics(pill_font)
+        available_w = self._available_requester_bar_width()
+        max_pill_w = (
+            min(180, max(64, available_w))
+            if len(self._all_requesters) == 1
+            else min(110, max(64, available_w))
+        )
+
+        formatted_all = [
+            (req, *self._format_requester_pill(req, metrics, max_pill_w))
+            for req in self._all_requesters
+        ]
+        total_w = sum(w for _, _, w in formatted_all) + 6 * (len(formatted_all) - 1)
+
+        inline_items: list[tuple[str, str, int]] = []
+        overflow_requesters: list[str] = []
+
+        if total_w <= available_w:
+            inline_items = formatted_all
+        else:
+            candidates = list(self._all_requesters)
+            if self._requester_filter is not None and self._requester_filter in candidates:
+                candidates = [
+                    self._requester_filter,
+                    *(r for r in candidates if r != self._requester_filter),
+                ]
+            max_overflow_w = max(34, metrics.horizontalAdvance(f"+{len(candidates)}") + 22)
+            budget = max(0, available_w - max_overflow_w - 6)
+            used_w = 0
+            for req in candidates:
+                label, pill_w = self._format_requester_pill(req, metrics, max_pill_w)
+                gap = 6 if inline_items else 0
+                if used_w + gap + pill_w <= budget:
+                    inline_items.append((req, label, pill_w))
+                    used_w += gap + pill_w
+                elif not inline_items and budget >= 64:
+                    shrunk_label, shrunk_w = self._format_requester_pill(
+                        req, metrics, min(max_pill_w, budget)
+                    )
+                    inline_items.append((req, shrunk_label, shrunk_w))
+                    used_w += shrunk_w
+                    break
+                else:
+                    break
+            inline_set = {req for req, _, _ in inline_items}
+            overflow_requesters = [r for r in self._all_requesters if r not in inline_set]
+
+        host_width = 0
+        for req, label, pill_w in inline_items:
+            btn = QPushButton(label, self.requester_pills_host)
+            btn.setObjectName("RequesterFilterPill")
+            btn.setProperty("requester_name", req)
+            btn.setToolTip(f"@{req}")
+            btn.setFixedSize(pill_w, 26)
+            btn.setFont(pill_font)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            set_qss_property(
+                btn,
+                "active",
+                self._current_tab == ViewTab.ACTIVE and self._requester_filter == req,
+            )
+            btn.clicked.connect(
+                lambda _checked=False, name=req: self._on_requester_pill_clicked(name)
+            )
+            self.requester_pills_layout.addWidget(btn)
+            btn.show()
+            self._requester_pill_buttons.append(btn)
+            host_width += pill_w + (6 if host_width > 0 else 0)
+
+        if overflow_requesters:
+            overflow_text = f"+{len(overflow_requesters)}"
+            overflow_font = make_ui_font(10, QFont.Weight.DemiBold)
+            overflow_w = max(32, QFontMetrics(overflow_font).horizontalAdvance(overflow_text) + 22)
+            overflow_btn = QPushButton(overflow_text, self.requester_pills_host)
+            overflow_btn.setObjectName("RequesterOverflowButton")
+            overflow_btn.setFixedSize(overflow_w, 26)
+            overflow_btn.setFont(overflow_font)
+            overflow_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            overflow_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            overflow_btn.setToolTip(
+                "All requesters (" + ", ".join(f"@{r}" for r in self._all_requesters) + ")"
+            )
+            set_qss_property(
+                overflow_btn,
+                "active",
+                self._current_tab == ViewTab.ACTIVE
+                and self._requester_filter in overflow_requesters,
+            )
+            overflow_btn.clicked.connect(self._toggle_requester_popover)
+            self.requester_pills_layout.addWidget(overflow_btn)
+            overflow_btn.show()
+            self.requester_overflow_btn = overflow_btn
+            self.requester_popover.set_toggle_button(overflow_btn)
+            host_width += overflow_w + (6 if host_width > 0 else 0)
+
+        self.requester_pills_host.setFixedWidth(host_width)
+
+    def _make_glyph_icon(self, kind: str, color: QColor, size: int = 12) -> QIcon:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        draw_vector_glyph(painter, kind, pixmap.rect().center().toPointF(), float(size), color)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _refresh_filter_pill_icons(self) -> None:
+        t = self._tokens
+        all_active = (
+            self._current_tab == ViewTab.ACTIVE
+            and not self._doing_only
+            and self._requester_filter is None
+        )
+        doing_active = self._current_tab == ViewTab.ACTIVE and self._doing_only
+        wait_active = self._current_tab == ViewTab.WAITING
+        sum_active = self._current_tab == ViewTab.SUMMARY
+
+        self.active_tab_btn.setIcon(
+            self._make_glyph_icon("all", QColor("#FFFFFF" if all_active else t.text_secondary))
+        )
+        self.doing_filter_btn.setIcon(
+            self._make_glyph_icon("play", QColor("#FFFFFF" if doing_active else t.text_secondary))
+        )
+        self.waiting_tab_btn.setIcon(
+            self._make_glyph_icon(
+                "pause", QColor(t.status_waiting if wait_active else t.text_secondary)
+            )
+        )
+        self.summary_tab_btn.setIcon(
+            self._make_glyph_icon("chart", QColor("#FFFFFF" if sum_active else t.text_secondary))
+        )
+        self._refresh_filter_sort_button()
+
+    def _is_filter_or_sort_active(self) -> bool:
+        return self._sort_mode != TaskSortMode.MANUAL or self._date_filter.is_active
+
+    def _refresh_filter_sort_button(self) -> None:
+        active = self._is_filter_or_sort_active()
+        set_qss_property(self.filter_sort_btn, "active", active)
+        icon_color = QColor(self._tokens.accent_primary if active else self._tokens.text_secondary)
+        dot_color = QColor(self._tokens.accent_primary) if active else None
+        self.filter_sort_btn.setIcon(
+            create_filter_icon(icon_color, active_dot_color=dot_color, size=14)
+        )
+
+    def _toggle_requester_popover(self) -> None:
+        if self._is_compact:
+            self.expand_workspace()
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+        if self.requester_popover.isVisible():
+            self.requester_popover.close_popover()
+            return
+        anchor = self.requester_overflow_btn or self.requester_pills_host
+        if (layout := self.layout()) is not None:
+            layout.activate()
+        self.requester_popover.open_near(
+            anchor,
+            requesters=self._all_requesters,
+            active_requester=(
+                self._requester_filter if self._current_tab == ViewTab.ACTIVE else None
+            ),
+        )
+
+    def _on_requester_popover_selected(self, requester: object) -> None:
+        if requester is None:
+            self._requester_filter = None
+            self.switch_tab(ViewTab.ACTIVE)
+            return
+        if isinstance(requester, str):
+            self._on_requester_pill_clicked(requester)
+
+    def _toggle_filter_popover(self) -> None:
+        if self._is_compact:
+            self.expand_workspace()
+        if self._current_tab == ViewTab.SUMMARY:
+            self.switch_tab(ViewTab.ACTIVE)
+        if self.requester_popover.isVisible():
+            self.requester_popover.close_popover()
+        if self.filter_popover.isVisible():
+            self.filter_popover.close_popover()
+            return
+        if (layout := self.layout()) is not None:
+            layout.activate()
+        self.filter_popover.open_near(
+            self.filter_sort_btn,
+            sort_mode=self._sort_mode,
+            date_filter=self._date_filter,
+            today=self._service.local_today(),
+        )
+
+    def _on_filter_sort_changed(self, sort_mode: object, date_filter: object) -> None:
+        if isinstance(sort_mode, TaskSortMode) and isinstance(date_filter, TaskDateFilter):
+            self._sort_mode = sort_mode
+            self._date_filter = date_filter
+            self.refresh_views()
+
+    def _on_filter_popover_closed(self) -> None:
+        self._update_hints_context()
 
     def _on_row_delete_requested(self, task_id: str) -> None:
         if self._expanded_task_id == task_id:
@@ -1125,10 +1699,13 @@ class MainWindow(QWidget):
         self._service.delete_work_session(session_id)
         self.refresh_views()
 
-    def _on_summary_day_changed(self, day: object) -> None:
-        if isinstance(day, date):
-            self._summary_day = day
+    def _on_summary_period_changed(self, period: object) -> None:
+        if isinstance(period, SummaryPeriod):
+            self._summary_period = period
             self.refresh_views()
+
+    def _on_summary_period_modal_closed(self) -> None:
+        self._update_hints_context()
 
     def _on_idle_keep(self) -> None:
         self._service.resolve_idle_gap(keep=True, idle_started_at=self._clock())

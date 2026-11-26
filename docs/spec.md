@@ -27,9 +27,10 @@
   - **Quit** (cleanly stops and persists any running **Task Timers** before exiting)
 - **Global Hotkey**: Defaults to `Ctrl+Alt+Space` (configurable in Settings). Pressing it toggles visibility and brings the spotlight window to the foreground with the Quick Bar focused.
 - **Layered `Esc` Behavior**:
-  1. Inside an open editor or **Thinking Space** field (title edit, **Requester** edit, notes, **Sub-step** input, or manual **Work Session** entry): `Esc` auto-saves and exits/collapses the field back to **Task List** navigation.
-  2. When the Quick Bar has non-empty text or active filter query: `Esc` clears the Quick Bar and returns to the unfiltered **Task List**.
-  3. At the top level (**Task List** with no open inline editor, or empty Quick Bar): `Esc` hides the window to the system tray.
+  1. Inside an open modal (**Settings**, **Activity Summary** period modal) or filter popover: `Esc` cancels/closes the overlay.
+  2. Inside an open editor or **Thinking Space** field (title edit, **Requester** edit, notes, **Sub-step** input, or manual **Work Session** entry): `Esc` auto-saves and exits/collapses the field back to **Task List** navigation.
+  3. When the Quick Bar has non-empty text or active filter query: `Esc` clears the Quick Bar and returns to the unfiltered **Task List**.
+  4. At the top level (**Task List** with no open inline editor, or empty Quick Bar): `Esc` hides the window to the system tray.
 
 ---
 
@@ -54,16 +55,20 @@ Top-level view switcher (`1`, `2`, `3` when not typing in an input):
    - Displays `Doing` **Tasks** pinned at the top, followed by `Todo` **Tasks** below.
    - Starting a **Task Timer** on a `Todo` **Task** automatically promotes its **Task Status** from `Todo` to `Doing`.
    - Pausing/stopping a **Task Timer** keeps the **Task** in `Doing` (explicit status transition is required to move to `Waiting`, `Done`, or back to `Todo`).
-   - Recently completed (`Done`) **Tasks** may be hidden from `Active` (visible in **Daily Summary** or via filter) or shown only when toggled/reopened.
+   - Recently completed (`Done`) **Tasks** may be hidden from `Active` (visible in **Activity Summary** or via filter) or shown only when toggled/reopened.
 2. **`2` — Waiting**:
    - Displays **Tasks** with **Task Status** `Waiting` (paused on a **Requester** or external dependency).
-3. **`3` — Daily Summary**:
-   - Displays a local chronological **Daily Summary** grouped by calendar day.
-   - Each day shows:
-     - Per-**Task** accumulated **Work Session** durations and completed **Tasks** for that day.
-     - **Merged non-overlapping wall-clock active total**: When multiple **Task Timers** overlap in time, overlapping intervals are merged (interval union) so the daily active total reflects real elapsed wall-clock work rather than double-counted parallel minutes.
+3. **`3` — Activity Summary**:
+   - Displays a local chronological **Activity Summary** over a calendar day, **Work Week** (Monday through Sunday), or custom inclusive `From`–`To` date range.
+   - Each period shows:
+     - Per-**Task** accumulated **Work Session** durations and completed **Tasks** for that period.
+     - **Merged non-overlapping wall-clock active total**: When multiple **Task Timers** overlap in time, overlapping intervals are merged (interval union) so the active total reflects real elapsed wall-clock work rather than double-counted parallel minutes.
+     - **Daily Breakdown Strip** (for **Work Week** and 2–14 day custom ranges): Shows per-day activity bars and lets the user click any day to drill down into that day's **Activity Summary**.
 
-- **Reordering**: `Alt+Up` / `Alt+Down` reorders **Tasks** within their current status group (`Doing`, `Todo`, or `Waiting`), persisted in SQLite.
+- **Task List Filtering & Sorting**:
+  - **Sort** (`Manual`, `Newest`, `Oldest`): `Doing` **Tasks** always remain pinned above `Todo` **Tasks**. Within each status group, `Manual` preserves `(sort_order, created_at, id)`, while `Newest`/`Oldest` order by `created_at` (with `id` tie-breaker).
+  - **Added Date Filter** (`Any`, `Today`, `This Week`, `Last Week`, `Custom` inclusive `From`–`To`): Filters `Active` and `Waiting` **Tasks** by local creation date.
+- **Reordering**: `Alt+Up` / `Alt+Down` reorders **Tasks** within their current status group (`Doing`, `Todo`, or `Waiting`) when `Sort` is `Manual`, persisted in SQLite.
 
 ---
 
@@ -76,13 +81,17 @@ When focus is in the **Task List** (not inside a text input):
 | `Up` / `Down` (or `j` / `k`) | Navigate between **Tasks** |
 | `t` | Toggle **Task Timer** (start or pause/stop) |
 | `Enter` | Expand or collapse **Thinking Space** for selected **Task** |
+| `n` | Expand **Thinking Space** (if collapsed) and focus Notes with cursor at end |
+| `s` | Expand **Thinking Space** (if collapsed) and focus **Sub-step** quick-add input |
+| `r` | Expand **Thinking Space** (if collapsed) and focus **Requester** input with text selected |
+| `e` | Expand **Thinking Space** (if collapsed) and focus **Task** title input with text selected |
 | `w` | Toggle **Task Status** to/from `Waiting` |
 | `d` | Mark **Task** `Done` (or reopen a `Done` **Task** to `Todo`) |
 | `+` | Open quick time adjustment (`+15m` / manual **Work Session**) |
-| `Alt+Up` / `Alt+Down` | Move **Task** up or down within its status group |
-| `1` / `2` / `3` | Switch view (`Active` · `Waiting` · `Daily Summary`) |
+| `Alt+Up` / `Alt+Down` | Move **Task** up or down within its status group (in `Manual` sort) |
+| `1` / `2` / `3` | Switch view (`Active` · `Waiting` · `Activity Summary`) |
 | `Ctrl+,` | Open Settings modal |
-| `Esc` | Layered escape (close inline editor -> clear bar -> hide to tray) |
+| `Esc` | Layered escape (close modal/popover -> collapse inline editor -> clear bar -> hide to tray) |
 
 - **Show Shortcut Hints**: A toggleable setting (`On` / `Off`) displays subtle keycap hints in the footer and row actions to aid shortcut discovery.
 
@@ -92,9 +101,9 @@ When focus is in the **Task List** (not inside a text input):
 
 Expanding a **Task** opens its inline **Thinking Space** containing:
 
-- **Inline Title & Requester Edit**: Click or shortcut to edit the **Task** title and optional **Requester** (`@name` or plain text), auto-saved on blur or `Esc`.
-- **Freeform Notes**: Auto-saved plain-text notes area with debounced persistence and immediate flush on `Esc` or window hide.
-- **Sub-steps**: Ordered, checkable action items inside the **Thinking Space** with inline add, toggle complete, and remove.
+- **Inline Title & Requester Edit**: Click or use direct-edit shortcuts (`e` for **Task** title, `r` for **Requester**, both selecting existing text) to edit the **Task** title and optional **Requester** (`@name` or plain text). Pressing `Enter` saves and collapses the **Thinking Space** back to **Task List** navigation; edits also auto-save on blur or `Esc`.
+- **Freeform Notes**: Auto-saved plain-text notes area (`n` shortcut focuses with cursor at the end) where `Enter` inserts a newline, with debounced persistence and immediate flush on `Ctrl+Enter`, `Esc`, or window hide.
+- **Sub-steps**: Ordered, checkable action items inside the **Thinking Space** with inline add (`s` shortcut focuses `+ Add sub-step...`; `Enter` adds the **Sub-step** and keeps focus in the input for rapid multi-step entry), toggle complete, and remove.
 - **Work Sessions**: List of recorded **Work Sessions** for the **Task**, supporting:
   - Quick adjustments (`+15m`, `-10m`)
   - Manual **Work Session** entry (duration or start/end time)
@@ -133,6 +142,6 @@ All core logic is built test-first against four explicit, Qt-free seams before U
 2. **`SQLiteRepository`** in `nyatodo.storage`:
    - Owns SQLite connection, schema initialization, and CRUD/query operations for **Tasks**, **Sub-steps**, **Work Sessions**, active **Task Timers**, ordering, and settings, parameterized by an injectable database path (`:memory:` or temp path in tests).
 3. **`TodoService`** in `nyatodo.service`:
-   - Orchestrates **Task** lifecycle (`Todo` -> `Doing` auto-promotion on timer start, staying `Doing` on pause, `Waiting`, `Done`/reopen), within-group reordering, **Thinking Space** updates, concurrent **Task Timers**, **Daily Summary** interval-union wall-clock math, idle trim calculations, and clean shutdown timer persistence with an injectable clock.
+   - Orchestrates **Task** lifecycle (`Todo` -> `Doing` auto-promotion on timer start, staying `Doing` on pause, `Waiting`, `Done`/reopen), within-group reordering, creation-date filtering/sorting, **Thinking Space** updates, concurrent **Task Timers**, **Activity Summary** interval-union wall-clock math across days/**Work Weeks**/custom ranges, idle trim calculations, and clean shutdown timer persistence with an injectable clock.
 4. **`PlatformBridge`** in `nyatodo.platform_win32`:
    - Defines a clean interface (`Protocol` / abstract boundary) for global hotkey registration/unregistration, idle-duration queries (`GetLastInputInfo`), and system theme detection, with Win32 `ctypes` implementation isolated behind it so service and UI tests can use deterministic fakes.
