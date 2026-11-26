@@ -36,6 +36,7 @@ class ColorTokens:
     tint_done: str
     tint_done_border: str
     tint_danger: str
+    tint_danger_border: str
     scrim_modal: str
     modal_bg: str
 
@@ -65,6 +66,7 @@ DARK_TOKENS = ColorTokens(
     tint_done="rgba(74, 222, 128, 0.14)",
     tint_done_border="rgba(74, 222, 128, 0.32)",
     tint_danger="rgba(248, 113, 113, 0.14)",
+    tint_danger_border="rgba(248, 113, 113, 0.36)",
     scrim_modal="rgba(0, 0, 0, 0.56)",
     modal_bg="#1B1C22",
 )
@@ -94,6 +96,7 @@ LIGHT_TOKENS = ColorTokens(
     tint_done="rgba(22, 163, 74, 0.11)",
     tint_done_border="rgba(22, 163, 74, 0.28)",
     tint_danger="rgba(220, 38, 38, 0.08)",
+    tint_danger_border="rgba(220, 38, 38, 0.28)",
     scrim_modal="rgba(24, 24, 27, 0.24)",
     modal_bg="#FFFFFF",
 )
@@ -620,6 +623,37 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         color: {t.text_muted};
     }}
 
+    #ImportancePill {{
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-size: 10.5px;
+        font-weight: 700;
+        border-radius: 9px;
+        padding: 0px 6px;
+        color: {t.text_secondary};
+        background-color: {t.bg_elevated};
+        border: 1px solid {t.border_subtle};
+    }}
+    #ImportancePill[level="1"] {{
+        color: {t.text_secondary};
+        background-color: {t.bg_elevated};
+        border: 1px solid {t.border_subtle};
+    }}
+    #ImportancePill[level="2"] {{
+        color: {t.status_waiting};
+        background-color: {t.tint_waiting};
+        border: 1px solid {t.tint_waiting_border};
+    }}
+    #ImportancePill[level="3"] {{
+        color: {t.danger};
+        background-color: {t.tint_danger};
+        border: 1px solid {t.tint_danger_border};
+    }}
+    #ImportancePill[done="true"] {{
+        color: {t.text_muted};
+        background-color: {t.bg_elevated};
+        border: 1px solid {t.border_subtle};
+    }}
+
     #TaskDatePill {{
         font-family: "Poppins", "Segoe UI", sans-serif;
         font-size: 10px;
@@ -696,6 +730,40 @@ def build_stylesheet(tokens: ColorTokens) -> str:
         border: 1px solid {t.tint_accent_border};
         color: {t.accent_primary};
         font-weight: 600;
+    }}
+
+    #ImportanceSegmentTrack {{
+        background-color: {segment_track_bg};
+        border: none;
+        border-radius: 11px;
+    }}
+    QPushButton#ImportanceSegmentOption {{
+        background-color: transparent;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        color: {t.text_muted};
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-size: 10.5px;
+        font-weight: 600;
+        padding: 0px 7px;
+    }}
+    QPushButton#ImportanceSegmentOption:hover {{
+        color: {t.text_primary};
+    }}
+    QPushButton#ImportanceSegmentOption[active="true"] {{
+        background-color: {segment_active_bg};
+        border: 1px solid {t.border_subtle};
+        color: {t.text_primary};
+    }}
+    QPushButton#ImportanceSegmentOption[active="true"][level="2"] {{
+        background-color: {t.tint_waiting};
+        border: 1px solid {t.tint_waiting_border};
+        color: {t.status_waiting};
+    }}
+    QPushButton#ImportanceSegmentOption[active="true"][level="3"] {{
+        background-color: {t.tint_danger};
+        border: 1px solid {t.tint_danger_border};
+        color: {t.danger};
     }}
 
     QPushButton#ThinkingTimerButton {{

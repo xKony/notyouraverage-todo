@@ -21,7 +21,7 @@ from nyatodo.domain import (
 )
 from nyatodo.ui.icons import create_close_icon
 from nyatodo.ui.pill_widgets import AnimatedStatusOrb, HoverOrbButton
-from nyatodo.ui.qt_helpers import set_qss_property
+from nyatodo.ui.qt_helpers import set_qss_property, sync_importance_pill
 from nyatodo.ui.theme import (
     DARK_TOKENS,
     ColorTokens,
@@ -109,6 +109,14 @@ class TaskRowWidget(QFrame):
         self.status_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.status_button.clicked.connect(lambda: self.status_clicked.emit(self._task.id))
         layout.addWidget(self.status_button)
+
+        self.importance_pill = QLabel(self)
+        self.importance_pill.setObjectName("ImportancePill")
+        self.importance_pill.setFont(make_ui_font(10, QFont.Weight.Bold))
+        self.importance_pill.setFixedHeight(18)
+        self.importance_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.importance_pill.setVisible(False)
+        layout.addWidget(self.importance_pill)
 
         self.title_label = _ElidedLabel(task.title, self)
         self.title_label.setObjectName("TaskTitleLabel")
@@ -233,6 +241,7 @@ class TaskRowWidget(QFrame):
         self._sync_hover_orbs()
 
         is_done = task.status == TaskStatus.DONE
+        sync_importance_pill(self.importance_pill, task.importance, is_done=is_done)
         weight = (
             QFont.Weight.ExtraLight
             if is_done

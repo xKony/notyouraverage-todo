@@ -38,13 +38,14 @@
 ## 3. Quick Bar & Live Match / Filter
 
 - **Auto-focus**: Opening or summoning the window places keyboard focus in the Quick Bar.
-- **Instant Task Creation**: Pressing `Enter` in standard capture mode immediately creates a new **Task** with **Task Status** `Todo` and clears the bar.
-- **`@name` Requester Parsing**:
+- **Instant Task Creation**: Pressing `Enter` in standard capture mode immediately creates a new **Task** with **Task Status** `Todo` (requiring a non-empty title) and clears the bar.
+- **`@name` Requester & `!`–`!!!` Importance Parsing**:
   - Any `@name` token (e.g., `@alice`) sets the optional **Requester** on the created **Task** and is stripped from the **Task** title.
-  - All other symbols (`#`, `!`, `/`, `:`, punctuation, URLs, etc.) remain literal text in the title.
+  - Any standalone space-separated `!`, `!!`, or `!!!` token anywhere in the input sets the **Task**'s **Importance** (`1`, `2`, or `3`) and is stripped from the title (if multiple standalone tokens appear, the highest **Importance** wins; default is `None` / `0`).
+  - `4+` consecutive exclamation marks (`!!!!`), attached punctuation (`Hello!`), and all other symbols (`#`, `/`, `:`, URLs, etc.) remain literal text in the title.
   - Only the first valid `@name` token sets `Requester` (or whitespace-normalized trailing/embedded `@name`); if no `@name` token is present, `Requester` is `None`.
-- **Live Match Preview**: As the user types in capture mode, matching existing **Tasks** (by title or **Requester**) preview dynamically in the **Task List** below. Pressing `Down` moves focus directly into the matching **Task** list instead of creating a new **Task** (unless navigating an open **Requester** autocompletion popup).
-- **Filter / Search Mode (`/`)**: Starting input with `/` enters pure filter/search mode across the **Task List** without creating a **Task** on `Enter`.
+- **Live Match Preview**: As the user types in capture mode, matching existing **Tasks** (by title, **Requester**, or standalone `!`/`!!`/`!!!` **Importance**) preview dynamically in the **Task List** below. Pressing `Down` moves focus directly into the matching **Task** list instead of creating a new **Task** (unless navigating an open **Requester** autocompletion popup).
+- **Filter / Search Mode (`/`)**: Starting input with `/` enters pure filter/search mode across the **Task List** (matching title, `@requester`, and standalone `!` / `!!` / `!!!` **Importance** tokens) without creating a **Task** on `Enter`.
 - **Requester Autocompletion & Canonicalization** (see [ADR 0003](adr/0003-requester-history-and-canonicalization.md)):
   - **Surfaces**: Available in Quick Bar capture mode, Quick Bar `/` search mode, and the **Thinking Space** **Requester** field (`r` shortcut or click).
   - **Triggering**:
@@ -91,9 +92,9 @@ Top-level view switcher (`1`, `2`, `3` when not typing in an input):
      - **Daily Breakdown Strip** (for **Work Week** and 2–14 day custom ranges): Shows per-day activity bars and lets the user click any day to drill down into that day's **Activity Summary**.
 
 - **Task List Filtering & Sorting**:
-  - **Sort** (`Manual`, `Newest`, `Oldest`): `Doing` **Tasks** always remain pinned above `Todo` **Tasks**. Within each status group, `Manual` preserves `(sort_order, created_at, id)`, while `Newest`/`Oldest` order by `created_at` (with `id` tie-breaker).
+  - **Sort** (`Manual`, `Newest`, `Oldest`): `Doing` **Tasks** always remain pinned above `Todo` **Tasks**. Within each status group (`Doing`, `Todo`, `Waiting`), **Tasks** sort by **Importance** descending (`!!!` → `!!` → `!` → `None`) first, then fall back to `Manual` (`sort_order`, `created_at`, `id`), `Newest` (`created_at` desc, `id`), or `Oldest` (`created_at` asc, `id`).
   - **Added Date Filter** (`Any`, `Today`, `This Week`, `Last Week`, `Custom` inclusive `From`–`To`): Filters `Active` and `Waiting` **Tasks** by local creation date.
-- **Reordering**: `Alt+Up` / `Alt+Down` reorders **Tasks** within their current status group (`Doing`, `Todo`, or `Waiting`) when `Sort` is `Manual`, persisted in SQLite.
+- **Reordering**: `Alt+Up` / `Alt+Down` reorders **Tasks** strictly within their current `(status, importance)` tier when `Sort` is `Manual` (stopping at tier boundaries without changing **Importance**), persisted in SQLite.
 
 ---
 
@@ -112,6 +113,7 @@ When focus is in the **Task List** (not inside a text input):
 | `e` | Expand **Thinking Space** (if collapsed) and focus **Task** title input with text selected |
 | `w` | Toggle **Task Status** to/from `Waiting` |
 | `d` | Mark **Task** `Done` (or reopen a `Done` **Task** to `Todo`) |
+| `i` / `Shift+I` | Cycle **Importance** forward (`None → ! → !! → !!! → None`) or backward |
 | `+` | Open quick time adjustment (`+15m` / manual **Work Session**) |
 | `Alt+Up` / `Alt+Down` | Move **Task** up or down within its status group (in `Manual` sort) |
 | `1` / `2` / `3` | Switch view (`Active` · `Waiting` · `Activity Summary`) |
@@ -126,6 +128,7 @@ When focus is in the **Task List** (not inside a text input):
 
 Expanding a **Task** opens its inline **Thinking Space** containing:
 
+- **Importance Selector**: Compact segmented control (`—` / `!` / `!!` / `!!!`) in the **Thinking Space** header lets the user inspect or change the **Task**'s **Importance** directly.
 - **Inline Title & Requester Edit**: Click or use direct-edit shortcuts (`e` for **Task** title, `r` for **Requester**, both selecting existing text) to edit the **Task** title and optional **Requester** (`@name` or plain text). Typing or editing in the **Requester** field opens **Requester** autocompletion (both with and without a leading `@`, though not immediately on initial `r` focus/selection), and saving auto-canonicalizes against history excluding the edited **Task** itself. Pressing `Enter` accepts a highlighted suggestion while keeping focus if navigated with `Up`/`Down`, or saves and collapses the **Thinking Space** back to **Task List** navigation; edits also auto-save on blur or `Esc` (closing an open autocompletion popup first).
 - **Freeform Notes**: Auto-saved plain-text notes area (`n` shortcut focuses with cursor at the end) where `Enter` inserts a newline, with debounced persistence and immediate flush on `Ctrl+Enter`, `Esc`, or window hide.
 - **Sub-steps**: Ordered, checkable action items inside the **Thinking Space** with inline add (`s` shortcut focuses `+ Add sub-step...`; `Enter` adds the **Sub-step** and keeps focus in the input for rapid multi-step entry), toggle complete, and remove.
@@ -163,10 +166,10 @@ Configurable preferences persisted locally:
 All core logic is built test-first against four explicit, Qt-free seams before UI integration:
 
 1. **`QuickBarParser` (`parse_quick_input`)** in `nyatodo.domain`:
-   - Parses raw Quick Bar text into structured intent: capture vs. filter mode (`/`), clean **Task** title, optional **Requester** from `@name`, while preserving all other symbols literally; also provides pure active-`@token` parsing and completion helpers (detecting an active first `@token` at cursor position and applying accepted **Requester** completions).
+   - Parses raw Quick Bar text into structured intent: capture vs. filter mode (`/`), clean **Task** title, optional **Requester** from `@name`, and **Importance** (`0`–`3`) from standalone `!`/`!!`/`!!!` tokens, while preserving `4+` exclamation marks, attached punctuation, and all other symbols literally; also provides pure active-`@token` parsing and completion helpers (detecting an active first `@token` at cursor position and applying accepted **Requester** completions).
 2. **`SQLiteRepository`** in `nyatodo.storage`:
-   - Owns SQLite connection, schema initialization, and CRUD/query operations for **Tasks**, **Sub-steps**, **Work Sessions**, active **Task Timers**, ordering, and settings, parameterized by an injectable database path (`:memory:` or temp path in tests).
+   - Owns SQLite connection, schema initialization, and CRUD/query operations for **Tasks** (including **Importance**), **Sub-steps**, **Work Sessions**, active **Task Timers**, ordering, and settings, parameterized by an injectable database path (`:memory:` or temp path in tests).
 3. **`TodoService`** in `nyatodo.service`:
-   - Orchestrates **Task** lifecycle (`Todo` -> `Doing` auto-promotion on timer start, staying `Doing` on pause, `Waiting`, `Done`/reopen), within-group reordering, creation-date filtering/sorting, **Thinking Space** updates, **Requester** suggestion ranking/deduplication and save-time canonicalization over stored **Task** history, concurrent **Task Timers**, **Activity Summary** interval-union wall-clock math across days/**Work Weeks**/custom ranges, idle trim calculations, and clean shutdown timer persistence with an injectable clock.
+   - Orchestrates **Task** lifecycle (`Todo` -> `Doing` auto-promotion on timer start, staying `Doing` on pause, `Waiting`, `Done`/reopen), **Importance** updates/cycling and **Importance**-first sorting across status groups, within-tier (`status`, `importance`) manual reordering, creation-date filtering/sorting, **Thinking Space** updates, **Requester** suggestion ranking/deduplication and save-time canonicalization over stored **Task** history, concurrent **Task Timers**, **Activity Summary** interval-union wall-clock math across days/**Work Weeks**/custom ranges, idle trim calculations, and clean shutdown timer persistence with an injectable clock.
 4. **`PlatformBridge`** in `nyatodo.platform_win32`:
    - Defines a clean interface (`Protocol` / abstract boundary) for global hotkey registration/unregistration, idle-duration queries (`GetLastInputInfo`), and system theme detection, with Win32 `ctypes` implementation isolated behind it so service and UI tests can use deterministic fakes.

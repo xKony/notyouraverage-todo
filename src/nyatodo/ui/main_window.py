@@ -27,8 +27,6 @@ from PySide6.QtGui import (
     QIcon,
     QKeyEvent,
     QMouseEvent,
-    QPainter,
-    QPixmap,
     QResizeEvent,
     QWindow,
 )
@@ -54,6 +52,7 @@ from nyatodo.domain import (
     Task,
     TaskDateFilter,
     TaskDateFilterMode,
+    TaskImportance,
     TaskSortMode,
     TaskStatus,
 )
@@ -68,9 +67,10 @@ from nyatodo.ui.icons import (
     create_chevron_icon,
     create_filter_icon,
     create_gear_icon,
+    create_glyph_icon,
 )
 from nyatodo.ui.idle_banner import IdleBanner
-from nyatodo.ui.pill_widgets import PulsingDot, draw_vector_glyph
+from nyatodo.ui.pill_widgets import PulsingDot
 from nyatodo.ui.qt_helpers import clear_layout, set_qss_property
 from nyatodo.ui.quick_bar import QuickBar
 from nyatodo.ui.requester_popover import RequesterPopover
@@ -357,7 +357,7 @@ class MainWindow(QWidget):
         self.expand_button = QPushButton(self.header_bar)
         self.expand_button.setObjectName("ExpandToggleButton")
         self.expand_button.setFixedSize(26, 26)
-        self.expand_button.setIconSize(QSize(13, 13))
+        self.expand_button.setIconSize(QSize(14, 14))
         self.expand_button.setToolTip("Expand workspace")
         self.expand_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.expand_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -406,7 +406,7 @@ class MainWindow(QWidget):
         ):
             btn.setObjectName("SegmentTabButton")
             btn.setFixedHeight(26)
-            btn.setIconSize(QSize(11, 11))
+            btn.setIconSize(QSize(12, 12))
             btn.setFont(make_ui_font(11, QFont.Weight.Medium))
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -518,7 +518,10 @@ class MainWindow(QWidget):
         self._tokens = tokens
         self.setStyleSheet(build_stylesheet(tokens))
 
-        self.brand_icon_label.setPixmap(create_cat_monogram_pixmap(18, QColor(tokens.text_primary)))
+        dpr = self.devicePixelRatioF()
+        self.brand_icon_label.setPixmap(
+            create_cat_monogram_pixmap(18, QColor(tokens.text_primary), dpr=dpr)
+        )
         self.running_pill_dot.set_state(QColor(tokens.status_doing), True)
         self._refresh_expand_button_icon()
         self.settings_button.setIcon(create_gear_icon(QColor(tokens.text_secondary), 14))
@@ -536,7 +539,9 @@ class MainWindow(QWidget):
         if self._thinking_widget is not None:
             self._thinking_widget.apply_theme(tokens)
         if self._empty_glyph_label is not None:
-            self._empty_glyph_label.setPixmap(create_check_pixmap(QColor(tokens.text_muted), 20))
+            self._empty_glyph_label.setPixmap(
+                create_check_pixmap(QColor(tokens.text_muted), 20, dpr=dpr)
+            )
 
         self._auto_hide_delay = settings.auto_hide_delay
         if self._auto_hide_delay.seconds is None or self.isActiveWindow():
@@ -1091,7 +1096,9 @@ class MainWindow(QWidget):
 
         glyph = QLabel(box)
         glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        glyph.setPixmap(create_check_pixmap(QColor(self._tokens.text_muted), 20))
+        glyph.setPixmap(
+            create_check_pixmap(QColor(self._tokens.text_muted), 20, dpr=self.devicePixelRatioF())
+        )
         self._empty_glyph_label = glyph
         layout.addWidget(glyph)
 
@@ -1112,6 +1119,7 @@ class MainWindow(QWidget):
     def _connect_thinking_space(self, widget: ThinkingSpaceWidget) -> None:
         widget.title_changed.connect(self._on_thinking_title_changed)
         widget.requester_changed.connect(self._on_thinking_requester_changed)
+        widget.importance_changed.connect(self._on_thinking_importance_changed)
         widget.status_changed.connect(self._on_thinking_status_changed)
         widget.timer_toggled.connect(self._on_thinking_timer_toggled)
         widget.notes_changed.connect(self._on_thinking_notes_changed)
@@ -1317,7 +1325,11 @@ class MainWindow(QWidget):
             return
 
         if mods != Qt.KeyboardModifier.NoModifier and not (
-            key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) and mods == Qt.KeyboardModifier.ShiftModifier
+            (
+                key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal)
+                and mods == Qt.KeyboardModifier.ShiftModifier
+            )
+            or (key == Qt.Key.Key_I and mods == Qt.KeyboardModifier.ShiftModifier)
         ):
             return
 
@@ -1340,6 +1352,11 @@ class MainWindow(QWidget):
             event.accept()
         elif key == Qt.Key.Key_D and self._selected_task_id is not None:
             self._service.toggle_done(self._selected_task_id)
+            self.refresh_views()
+            event.accept()
+        elif key == Qt.Key.Key_I and self._selected_task_id is not None:
+            reverse = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+            self._service.cycle_importance(self._selected_task_id, reverse=reverse)
             self.refresh_views()
             event.accept()
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) and self._selected_task_id is not None:
@@ -1558,12 +1575,19 @@ class MainWindow(QWidget):
         self.requester_pills_host.setFixedWidth(host_width)
 
     def _make_glyph_icon(self, kind: str, color: QColor, size: int = 12) -> QIcon:
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        draw_vector_glyph(painter, kind, pixmap.rect().center().toPointF(), float(size), color)
-        painter.end()
-        return QIcon(pixmap)
+        return create_glyph_icon(kind, color, size)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.DevicePixelRatioChange:
+            dpr = self.devicePixelRatioF()
+            self.brand_icon_label.setPixmap(
+                create_cat_monogram_pixmap(18, QColor(self._tokens.text_primary), dpr=dpr)
+            )
+            if self._empty_glyph_label is not None:
+                self._empty_glyph_label.setPixmap(
+                    create_check_pixmap(QColor(self._tokens.text_muted), 20, dpr=dpr)
+                )
 
     def _refresh_filter_pill_icons(self) -> None:
         t = self._tokens
@@ -1673,6 +1697,11 @@ class MainWindow(QWidget):
         req = requester if isinstance(requester, str) else None
         self._service.update_task(task_id, requester=req)
         self.refresh_views()
+
+    def _on_thinking_importance_changed(self, task_id: str, importance: object) -> None:
+        if isinstance(importance, TaskImportance):
+            self._service.set_importance(task_id, importance)
+            self.refresh_views()
 
     def _on_thinking_status_changed(self, task_id: str, status: object) -> None:
         if isinstance(status, TaskStatus):

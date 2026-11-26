@@ -34,7 +34,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nyatodo.domain import SubStep, Task, TaskStatus, WorkSession, format_task_added_full
+from nyatodo.domain import (
+    SubStep,
+    Task,
+    TaskImportance,
+    TaskStatus,
+    WorkSession,
+    format_task_added_full,
+)
 from nyatodo.ui.icons import create_close_icon, create_play_icon, create_stop_icon
 from nyatodo.ui.qt_helpers import clear_layout, set_qss_property
 from nyatodo.ui.requester_autocomplete_popup import RequesterAutocompletePopup
@@ -252,6 +259,7 @@ class ThinkingSpaceWidget(QFrame):
 
     title_changed = Signal(str, str)
     requester_changed = Signal(str, object)
+    importance_changed = Signal(str, object)
     status_changed = Signal(str, object)
     timer_toggled = Signal(str)
     notes_changed = Signal(str, str)
@@ -327,10 +335,47 @@ class ThinkingSpaceWidget(QFrame):
         self.title_edit.editingFinished.connect(self._commit_title)
         root.addWidget(self.title_edit)
 
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(8)
+
         self.added_meta_label = QLabel(self)
         self.added_meta_label.setObjectName("ThinkingAddedLabel")
         self.added_meta_label.setFont(make_ui_font(11))
-        root.addWidget(self.added_meta_label)
+        meta_row.addWidget(self.added_meta_label)
+        meta_row.addStretch(1)
+
+        importance_track = QFrame(self)
+        importance_track.setObjectName("ImportanceSegmentTrack")
+        importance_track.setFixedHeight(22)
+        importance_layout = QHBoxLayout(importance_track)
+        importance_layout.setContentsMargins(2, 2, 2, 2)
+        importance_layout.setSpacing(2)
+
+        self._importance_buttons: dict[TaskImportance, QPushButton] = {}
+        for level in (
+            TaskImportance.NONE,
+            TaskImportance.LOW,
+            TaskImportance.MEDIUM,
+            TaskImportance.HIGH,
+        ):
+            btn = QPushButton(level.label, importance_track)
+            btn.setObjectName("ImportanceSegmentOption")
+            btn.setFixedHeight(18)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(
+                "Importance: None" if level == TaskImportance.NONE else f"Importance: {level.marks}"
+            )
+            set_qss_property(btn, "level", str(int(level)))
+            btn.clicked.connect(
+                lambda _checked=False, imp=level: self.importance_changed.emit(self._task.id, imp)
+            )
+            self._importance_buttons[level] = btn
+            importance_layout.addWidget(btn)
+
+        meta_row.addWidget(importance_track)
+        root.addLayout(meta_row)
 
         controls_row = QHBoxLayout()
         controls_row.setContentsMargins(0, 0, 0, 0)
@@ -645,6 +690,9 @@ class ThinkingSpaceWidget(QFrame):
                 self.notes_editor.setPlainText(task.notes)
                 self._notes_dirty = False
                 self.saved_label.setText("Saved")
+
+            for level, btn in self._importance_buttons.items():
+                set_qss_property(btn, "active", task.importance == level)
 
             for status_val, btn in self._status_buttons.items():
                 set_qss_property(btn, "active", task.status == status_val)

@@ -14,6 +14,7 @@ from nyatodo.domain import (
     Task,
     TaskDateFilter,
     TaskDateFilterMode,
+    TaskImportance,
     TaskSortMode,
     TaskStatus,
     ThemeMode,
@@ -936,3 +937,109 @@ def test_service_requester_canonicalization_on_add_and_update() -> None:
         # Clearing requester via None or whitespace/bare '@' stores None
         assert service.update_task(t_sole.id, requester=None).requester is None
         assert service.update_task(t5.id, requester="  @  ").requester is None
+
+
+def test_service_importance_parsing_sorting_tier_reordering_and_search() -> None:
+    clock = _FakeClock(datetime(2026, 11, 26, 9, 0, tzinfo=UTC))
+    with SQLiteRepository(":memory:") as repo:
+        service = TodoService(repo, clock=clock)
+
+        # Importance-only Quick Bar input does not create an empty Task
+        assert service.add_task_from_input("!!!") is None
+        assert service.add_task_from_input("@Maya !!") is None
+
+        t_none = service.add_task_from_input("Normal task")
+        clock.advance(minutes=5)
+        t_low_a = service.add_task_from_input("Low A !")
+        clock.advance(minutes=5)
+        t_low_b = service.add_task_from_input("Low B !")
+        clock.advance(minutes=5)
+        t_high = service.add_task_from_input("Critical outage !!! @Maya")
+        clock.advance(minutes=5)
+        t_med = service.add_task_from_input("Medium review !! @Alex")
+        assert (
+            t_none is not None
+            and t_low_a is not None
+            and t_low_b is not None
+            and t_high is not None
+            and t_med is not None
+        )
+        assert t_high.title == "Critical outage"
+        assert t_high.importance == TaskImportance.HIGH
+        assert t_high.requester == "Maya"
+
+        # Importance descending first across Manual, Newest, and Oldest
+        assert [t.id for t in service.list_active_tasks(TaskSortMode.MANUAL)] == [
+            t_high.id,
+            t_med.id,
+            t_low_a.id,
+            t_low_b.id,
+            t_none.id,
+        ]
+        assert [t.id for t in service.list_active_tasks(TaskSortMode.NEWEST)] == [
+            t_high.id,
+            t_med.id,
+            t_low_b.id,
+            t_low_a.id,
+            t_none.id,
+        ]
+        assert [t.id for t in service.list_active_tasks(TaskSortMode.OLDEST)] == [
+            t_high.id,
+            t_med.id,
+            t_low_a.id,
+            t_low_b.id,
+            t_none.id,
+        ]
+
+        # Reordering stays strictly within the (status, importance) tier
+        service.reorder_task(t_low_b.id, -1)
+        assert [t.id for t in service.list_active_tasks(TaskSortMode.MANUAL)] == [
+            t_high.id,
+            t_med.id,
+            t_low_b.id,
+            t_low_a.id,
+            t_none.id,
+        ]
+        # Boundary clamp: cannot push Low B above Medium
+        service.reorder_task(t_low_b.id, -1)
+        assert [t.id for t in service.list_active_tasks(TaskSortMode.MANUAL)] == [
+            t_high.id,
+            t_med.id,
+            t_low_b.id,
+            t_low_a.id,
+            t_none.id,
+        ]
+
+        # Doing stays pinned above Todo even if Doing task has lower Importance
+        service.toggle_timer(t_none.id)
+        active_ids = [t.id for t in service.list_active_tasks(TaskSortMode.MANUAL)]
+        assert active_ids[0] == t_none.id
+        assert active_ids[1] == t_high.id
+
+        # Waiting also sorts by Importance descending
+        service.set_status(t_low_a.id, TaskStatus.WAITING)
+        service.set_status(t_med.id, TaskStatus.WAITING)
+        assert [t.id for t in service.list_waiting_tasks(TaskSortMode.MANUAL)] == [
+            t_med.id,
+            t_low_a.id,
+        ]
+
+        # Importance is preserved across Done and reopen, and cycle_importance wraps
+        done_high = service.toggle_done(t_high.id)
+        assert done_high.status == TaskStatus.DONE
+        assert done_high.importance == TaskImportance.HIGH
+        reopened = service.toggle_done(t_high.id)
+        assert reopened.status == TaskStatus.TODO
+        assert reopened.importance == TaskImportance.HIGH
+
+        assert service.cycle_importance(t_low_b.id).importance == TaskImportance.MEDIUM
+        assert service.cycle_importance(t_low_b.id, reverse=True).importance == TaskImportance.LOW
+        assert service.cycle_importance(t_low_b.id, reverse=True).importance == TaskImportance.NONE
+        assert service.cycle_importance(t_low_b.id, reverse=True).importance == TaskImportance.HIGH
+
+        # Search supports ! / !! / !!! filters and orders by status + Importance
+        assert [t.id for t in service.search_tasks("/ !!!")] == [t_low_b.id, t_high.id]
+        service.toggle_timer(t_high.id)
+        assert [t.id for t in service.search_tasks("/ !!!")] == [t_high.id, t_low_b.id]
+        assert [t.id for t in service.search_tasks("/ @Maya !!!")] == [t_high.id]
+        assert [t.id for t in service.search_tasks("/ !!")] == [t_med.id]

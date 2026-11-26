@@ -18,7 +18,7 @@ from PySide6.QtCore import (
     QtMsgType,
     qInstallMessageHandler,
 )
-from PySide6.QtGui import QCursor, QEnterEvent, QGuiApplication, QMouseEvent
+from PySide6.QtGui import QCursor, QEnterEvent, QGuiApplication, QImage, QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -37,6 +37,7 @@ from nyatodo.domain import (
     Settings,
     SummaryPeriod,
     TaskDateFilterMode,
+    TaskImportance,
     TaskSortMode,
     TaskStatus,
     ThemeMode,
@@ -1325,6 +1326,7 @@ def test_task_list_direct_edit_shortcuts_n_s_r_e_and_compact_hints(
         assert list(zip(keycaps, verbs, strict=True)) == [
             ("↓↑", "Move"),
             ("t", "Timer"),
+            ("i", "!"),
             ("n/s/r/e", "Edit"),
             ("w", "Wait"),
             ("d", "Done"),
@@ -1895,3 +1897,132 @@ def test_main_window_startup_emits_no_qfont_point_size_warnings(
             repo.close()
     finally:
         qInstallMessageHandler(previous)
+
+
+def test_importance_quick_bar_preview_sorting_shortcuts_and_thinking_space(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    window, service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        # 1. Quick Bar live Importance preview and creation
+        window.quick_bar.input_edit.setText("Draft report")
+        assert not window.quick_bar.importance_pill.isVisible()
+        window.quick_bar.input_edit.setText("Urgent deploy !!! @Maya")
+        assert window.quick_bar.importance_pill.isVisible()
+        assert window.quick_bar.importance_pill.text() == "!!!"
+        assert window.quick_bar.importance_pill.property("level") == "3"
+
+        # Searching hides capture preview pills
+        window.quick_bar.input_edit.setText("/ !!!")
+        assert not window.quick_bar.importance_pill.isVisible()
+        window.quick_bar.clear()
+
+        t_none = service.add_task_from_input("Regular item")
+        t_high = service.add_task_from_input("Urgent deploy !!! @Maya")
+        t_low = service.add_task_from_input("Minor cleanup !")
+        assert t_none is not None and t_high is not None and t_low is not None
+        window.refresh_views()
+
+        # Sorted by Importance descending: !!! -> ! -> None
+        assert window.displayed_task_ids() == [t_high.id, t_low.id, t_none.id]
+        row_high = window._row_widgets[t_high.id]
+        row_low = window._row_widgets[t_low.id]
+        row_none = window._row_widgets[t_none.id]
+        assert row_high.importance_pill.isVisible()
+        assert row_high.importance_pill.text() == "!!!"
+        assert row_high.importance_pill.property("level") == "3"
+        assert row_low.importance_pill.isVisible()
+        assert row_low.importance_pill.text() == "!"
+        assert row_low.importance_pill.property("level") == "1"
+        assert not row_none.importance_pill.isVisible()
+
+        # 2. Task List shortcuts 'i' and 'Shift+I' cycle Importance & re-sort
+        window._select_task(t_none.id)
+        window.task_scroll.setFocus()
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_I)
+        reloaded = service.get_task(t_none.id)
+        assert reloaded is not None and reloaded.importance == TaskImportance.LOW
+
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_I)
+        reloaded = service.get_task(t_none.id)
+        assert reloaded is not None and reloaded.importance == TaskImportance.MEDIUM
+        assert window.displayed_task_ids() == [t_high.id, t_none.id, t_low.id]
+
+        QTest.keyClick(window.task_scroll, Qt.Key.Key_I, Qt.KeyboardModifier.ShiftModifier)
+        reloaded = service.get_task(t_none.id)
+        assert reloaded is not None and reloaded.importance == TaskImportance.LOW
+
+        # 3. Thinking Space segmented Importance selector updates task & re-sorts
+        window._expand_task(t_low.id)
+        ts = find_thinking_space(window)
+        assert ts._importance_buttons[TaskImportance.LOW].property("active") is True
+        btn_high = ts._importance_buttons[TaskImportance.HIGH]
+        QTest.mouseClick(btn_high, Qt.MouseButton.LeftButton, pos=btn_high.rect().center())
+        reloaded_low = service.get_task(t_low.id)
+        assert reloaded_low is not None and reloaded_low.importance == TaskImportance.HIGH
+        assert window.displayed_task_ids()[0] in (t_high.id, t_low.id)
+
+        # 4. Done task in '/' search keeps muted Importance pill
+        service.toggle_done(t_high.id)
+        window.quick_bar.input_edit.setText("/ !!!")
+        QApplication.processEvents()
+        done_row = window._row_widgets[t_high.id]
+        assert done_row.importance_pill.isVisible()
+        assert done_row.importance_pill.property("done") is True
+    finally:
+        window.tick_timer.stop()
+        repo.close()
+
+
+def _rendered_glyph_padding(widget: QWidget) -> tuple[int, int, int, int]:
+    """Return (left, right, top, bottom) pixel padding around a pill button's rendered glyph."""
+    pixmap = widget.grab()
+    image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    w, h = image.width(), image.height()
+    dpr = pixmap.devicePixelRatio()
+    bg = image.pixelColor(max(2, int(w * 0.2)), max(3, int(5 * dpr)))
+    margin = max(2, int(2.5 * dpr))
+    xs: list[int] = []
+    ys: list[int] = []
+    for y in range(margin, h - margin):
+        for x in range(margin, w - margin):
+            c = image.pixelColor(x, y)
+            dist = abs(c.red() - bg.red()) + abs(c.green() - bg.green()) + abs(c.blue() - bg.blue())
+            if dist > 18:
+                xs.append(x)
+                ys.append(y)
+    assert xs and ys, "Expected visible icon pixels inside pill widget"
+    return min(xs), (w - 1) - max(xs), min(ys), (h - 1) - max(ys)
+
+
+def test_pill_icons_render_at_high_dpi_and_center_cleanly(qtbot: QtBot, tmp_path: Path) -> None:
+    window, _service, _clock, _platform, repo = make_window(qtbot, tmp_path)
+    try:
+        for btn in (
+            window.active_tab_btn,
+            window.doing_filter_btn,
+            window.waiting_tab_btn,
+            window.summary_tab_btn,
+            window.filter_sort_btn,
+            window.expand_button,
+            window.settings_button,
+            window.summary_view.prev_period_button,
+            window.summary_view.period_button,
+            window.summary_view.next_period_button,
+        ):
+            icon_size = btn.iconSize()
+            scaled = btn.icon().pixmap(icon_size, 2.0)
+            assert scaled.devicePixelRatio() == pytest.approx(2.0)
+            assert scaled.width() == icon_size.width() * 2
+            assert scaled.height() == icon_size.height() * 2
+
+        for symmetric_btn in (window.summary_tab_btn, window.filter_sort_btn):
+            left, right, top, bottom = _rendered_glyph_padding(symmetric_btn)
+            assert abs(left - right) <= 1
+            assert abs(top - bottom) <= 1
+
+        _left, _right, doing_top, doing_bottom = _rendered_glyph_padding(window.doing_filter_btn)
+        assert abs(doing_top - doing_bottom) <= 1
+    finally:
+        window.tick_timer.stop()
+        repo.close()

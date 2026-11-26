@@ -12,12 +12,13 @@ from nyatodo.domain import (
     Settings,
     SubStep,
     Task,
+    TaskImportance,
     TaskStatus,
     ThemeMode,
     WorkSession,
 )
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 def _serialize_dt(dt: datetime | None) -> str | None:
@@ -82,6 +83,7 @@ class SQLiteRepository:
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    importance INTEGER NOT NULL DEFAULT 0,
                     requester TEXT,
                     notes TEXT NOT NULL DEFAULT '',
                     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -89,9 +91,6 @@ class SQLiteRepository:
                     updated_at TEXT NOT NULL,
                     completed_at TEXT
                 );
-
-                CREATE INDEX IF NOT EXISTS idx_tasks_status_sort
-                    ON tasks (status, sort_order, created_at, id);
 
                 CREATE TABLE IF NOT EXISTS sub_steps (
                     id TEXT PRIMARY KEY,
@@ -125,6 +124,22 @@ class SQLiteRepository:
                 );
                 """
             )
+            task_columns = {
+                str(col["name"])
+                for col in self._conn.execute("PRAGMA table_info(tasks);").fetchall()
+            }
+            if "importance" not in task_columns:
+                self._conn.execute(
+                    "ALTER TABLE tasks ADD COLUMN importance INTEGER NOT NULL DEFAULT 0;"
+                )
+            if self.schema_version() < 3:
+                self._conn.execute("DROP INDEX IF EXISTS idx_tasks_status_sort;")
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_tasks_status_sort
+                    ON tasks (status, importance DESC, sort_order, created_at, id);
+                """
+            )
             columns = {
                 str(col["name"])
                 for col in self._conn.execute("PRAGMA table_info(settings);").fetchall()
@@ -142,12 +157,13 @@ class SQLiteRepository:
             self._conn.execute(
                 """
                 INSERT INTO tasks (
-                    id, title, status, requester, notes, sort_order,
+                    id, title, status, importance, requester, notes, sort_order,
                     created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     status = excluded.status,
+                    importance = excluded.importance,
                     requester = excluded.requester,
                     notes = excluded.notes,
                     sort_order = excluded.sort_order,
@@ -159,6 +175,7 @@ class SQLiteRepository:
                     task.id,
                     task.title,
                     task.status.value,
+                    int(task.importance),
                     task.requester,
                     task.notes,
                     task.sort_order,
@@ -179,17 +196,20 @@ class SQLiteRepository:
         return self._row_to_task(row, sub_steps, sessions)
 
     def list_tasks(self, status: TaskStatus | None = None) -> list[Task]:
-        """List Tasks sorted deterministically by sort_order, created_at, id."""
+        """List Tasks sorted deterministically by importance DESC, sort_order, created_at, id."""
         if status is None:
             rows = self._conn.execute(
-                "SELECT * FROM tasks ORDER BY sort_order ASC, created_at ASC, id ASC;"
+                """
+                SELECT * FROM tasks
+                ORDER BY importance DESC, sort_order ASC, created_at ASC, id ASC;
+                """
             ).fetchall()
         else:
             rows = self._conn.execute(
                 """
                 SELECT * FROM tasks
                 WHERE status = ?
-                ORDER BY sort_order ASC, created_at ASC, id ASC;
+                ORDER BY importance DESC, sort_order ASC, created_at ASC, id ASC;
                 """,
                 (status.value,),
             ).fetchall()
@@ -409,6 +429,7 @@ class SQLiteRepository:
             id=str(row["id"]),
             title=str(row["title"]),
             status=TaskStatus(str(row["status"])),
+            importance=TaskImportance.from_int(int(row["importance"])),
             requester=str(requester_raw) if requester_raw is not None else None,
             notes=str(row["notes"]),
             sort_order=int(row["sort_order"]),

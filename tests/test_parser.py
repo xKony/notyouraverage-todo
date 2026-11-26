@@ -9,6 +9,7 @@ from nyatodo.parser import (
     ManualSessionSpec,
     ParsedQuickInput,
     QuickBarParser,
+    TaskImportance,
     apply_requester_completion,
     extract_search_query,
     find_active_requester_token,
@@ -243,3 +244,72 @@ def test_apply_requester_completion_end_mid_sentence_search_and_no_space() -> No
         "Fix @Adrian bug",
         11,
     )
+
+
+def test_parse_quick_input_importance_levels_and_literal_edge_cases() -> None:
+    assert parse_quick_input("! Check logs") == ParsedQuickInput(
+        title="Check logs",
+        requester=None,
+        importance=TaskImportance.LOW,
+    )
+    assert parse_quick_input("Review !! contract @Maya") == ParsedQuickInput(
+        title="Review contract",
+        requester="Maya",
+        importance=TaskImportance.MEDIUM,
+    )
+    assert parse_quick_input("Fix prod outage !!! @alex") == ParsedQuickInput(
+        title="Fix prod outage",
+        requester="alex",
+        importance=TaskImportance.HIGH,
+    )
+    # Multiple standalone tokens take the highest level and strip all of them
+    assert parse_quick_input("! Fix bug !!!") == ParsedQuickInput(
+        title="Fix bug",
+        requester=None,
+        importance=TaskImportance.HIGH,
+    )
+    # Attached punctuation and 4+ exclamation marks remain literal in the title
+    assert parse_quick_input("Hello! world") == ParsedQuickInput(
+        title="Hello! world",
+        requester=None,
+        importance=TaskImportance.NONE,
+    )
+    assert parse_quick_input("Whoa !!!! check !urgent") == ParsedQuickInput(
+        title="Whoa !!!! check !urgent",
+        requester=None,
+        importance=TaskImportance.NONE,
+    )
+    assert parse_quick_input("Ping @Maya! about release") == ParsedQuickInput(
+        title="Ping about release",
+        requester="Maya",
+        importance=TaskImportance.NONE,
+    )
+    # Importance-only inputs produce an empty title
+    assert parse_quick_input("!!!") == ParsedQuickInput(
+        title="",
+        requester=None,
+        importance=TaskImportance.HIGH,
+    )
+    assert parse_quick_input("@Maya !!") == ParsedQuickInput(
+        title="",
+        requester="Maya",
+        importance=TaskImportance.MEDIUM,
+    )
+
+
+def test_task_importance_cycling_and_labels() -> None:
+    assert TaskImportance.NONE.marks == ""
+    assert TaskImportance.NONE.label == "—"
+    assert TaskImportance.LOW.marks == "!"
+    assert TaskImportance.MEDIUM.marks == "!!"
+    assert TaskImportance.HIGH.marks == "!!!"
+
+    assert TaskImportance.NONE.next_level() == TaskImportance.LOW
+    assert TaskImportance.LOW.next_level() == TaskImportance.MEDIUM
+    assert TaskImportance.MEDIUM.next_level() == TaskImportance.HIGH
+    assert TaskImportance.HIGH.next_level() == TaskImportance.NONE
+
+    assert TaskImportance.NONE.prev_level() == TaskImportance.HIGH
+    assert TaskImportance.HIGH.prev_level() == TaskImportance.MEDIUM
+    assert TaskImportance.MEDIUM.prev_level() == TaskImportance.LOW
+    assert TaskImportance.LOW.prev_level() == TaskImportance.NONE

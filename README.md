@@ -1,4 +1,4 @@
-# nyatodo
+# nya~ todo
 
 A personal, keyboard-first desktop workspace for low-friction **Task** capture, thought structuring in a **Thinking Space**, and concurrent time tracking via **Task Timers** and **Work Sessions**.
 

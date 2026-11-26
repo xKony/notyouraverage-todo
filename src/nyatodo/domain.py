@@ -8,6 +8,7 @@ from enum import Enum, StrEnum
 from nyatodo.parser import (
     ParsedQuickInput,
     QuickBarParser,
+    TaskImportance,
     extract_search_query,
     is_search_input,
     parse_quick_input,
@@ -30,6 +31,7 @@ __all__ = [
     "TaskDateFilter",
     "TaskDateFilterMode",
     "TaskDayBreakdown",
+    "TaskImportance",
     "TaskSortMode",
     "TaskStatus",
     "TaskSummaryBreakdown",
@@ -304,6 +306,7 @@ class Task:
     created_at: datetime
     updated_at: datetime
     status: TaskStatus = TaskStatus.TODO
+    importance: TaskImportance = TaskImportance.NONE
     requester: str | None = None
     notes: str = ""
     sort_order: int = 0

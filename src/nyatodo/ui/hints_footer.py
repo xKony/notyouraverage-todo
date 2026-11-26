@@ -35,6 +35,7 @@ _HINTS_BY_CONTEXT: dict[HintContext, tuple[tuple[str, str], ...]] = {
     HintContext.TASK_LIST: (
         ("↓↑", "Move"),
         ("t", "Timer"),
+        ("i", "!"),
         ("n/s/r/e", "Edit"),
         ("w", "Wait"),
         ("d", "Done"),

@@ -211,7 +211,7 @@ class ActivitySummaryView(QWidget):
         self.period_button = QPushButton("Today", self)
         self.period_button.setObjectName("SummaryPeriodButton")
         self.period_button.setFixedHeight(28)
-        self.period_button.setIconSize(QSize(13, 13))
+        self.period_button.setIconSize(QSize(14, 14))
         self.period_button.setFont(make_ui_font(12, QFont.Weight.DemiBold))
         self.period_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.period_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -338,7 +338,7 @@ class ActivitySummaryView(QWidget):
         nav_color = QColor(tokens.text_secondary)
         self.prev_period_button.setIcon(create_chevron_icon("left", nav_color, 14))
         self.next_period_button.setIcon(create_chevron_icon("right", nav_color, 14))
-        self.period_button.setIcon(create_calendar_icon(nav_color, 13))
+        self.period_button.setIcon(create_calendar_icon(nav_color, 14))
         if self._summary is not None:
             self.set_summary(self._summary, today=self._today)
 

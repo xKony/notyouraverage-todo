@@ -12,6 +12,7 @@ from nyatodo.domain import (
     Settings,
     SubStep,
     Task,
+    TaskImportance,
     TaskStatus,
     ThemeMode,
     WorkSession,
@@ -34,6 +35,7 @@ def test_repository_persists_task_substep_and_open_work_session_across_restarts(
             id="task-1",
             title="Investigate memory spike",
             status=TaskStatus.DOING,
+            importance=TaskImportance.HIGH,
             requester="Alex",
             notes="Check SQLite connection lifecycle.",
             sort_order=0,
@@ -65,6 +67,7 @@ def test_repository_persists_task_substep_and_open_work_session_across_restarts(
     assert loaded is not None
     assert loaded.title == "Investigate memory spike"
     assert loaded.status == TaskStatus.DOING
+    assert loaded.importance == TaskImportance.HIGH
     assert loaded.requester == "Alex"
     assert loaded.notes == "Check SQLite connection lifecycle."
     assert len(loaded.sub_steps) == 1
@@ -140,6 +143,42 @@ def test_repository_migrates_v1_settings_table_to_include_auto_hide_delay(tmp_pa
     conn.close()
 
     with SQLiteRepository(db_path) as repo:
-        assert repo.schema_version() == 2
+        assert repo.schema_version() == 3
         loaded = repo.get_settings()
         assert loaded.auto_hide_delay == AutoHideDelay.THREE_SEC
+
+
+def test_repository_migrates_v2_tasks_table_to_include_importance(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy_v2.db"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.executescript(
+            """
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requester TEXT,
+                notes TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+            INSERT INTO tasks (
+                id, title, status, requester, notes, sort_order,
+                created_at, updated_at, completed_at
+            ) VALUES (
+                'legacy-1', 'Old task', 'Todo', NULL, '', 0,
+                '2026-11-25T09:00:00+00:00', '2026-11-25T09:00:00+00:00', NULL
+            );
+            PRAGMA user_version = 2;
+            """
+        )
+    conn.close()
+
+    with SQLiteRepository(db_path) as repo:
+        assert repo.schema_version() == 3
+        loaded = repo.get_task("legacy-1")
+        assert loaded is not None
+        assert loaded.importance == TaskImportance.NONE

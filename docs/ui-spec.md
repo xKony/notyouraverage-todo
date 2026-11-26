@@ -2,7 +2,7 @@
 
 > **Authority:** Create (greenfield desktop operational surface).  
 > **Primary Purpose:** **Operate** — UI disappears into the task. Keyboard-first speed, zero decorative clutter, crisp hierarchy.  
-> **Domain Vocabulary:** Strictly follows [GLOSSARY.md](../GLOSSARY.md) (**Task**, **Task List**, **Requester**, **Task Status** [`Todo`, `Doing`, `Waiting`, `Done`], **Thinking Space**, **Sub-step**, **Task Timer**, **Work Session**, **Activity Summary**, **Work Week**).
+> **Domain Vocabulary:** Strictly follows [GLOSSARY.md](../GLOSSARY.md) (**Task**, **Task List**, **Requester**, **Task Status** [`Todo`, `Doing`, `Waiting`, `Done`], **Importance** [`None`, `!`, `!!`, `!!!`], **Thinking Space**, **Sub-step**, **Task Timer**, **Work Session**, **Activity Summary**, **Work Week**).
 
 ---
 
@@ -156,6 +156,7 @@ All foreground tokens are verified to achieve `>= 4.5:1` WCAG AA contrast agains
    - **Single-line `QLineEdit` (`15px` placeholder / `14px` text, `text_primary`):**
      - Placeholder (`text_muted`): `"What's next?"`
    - **Right inline indicators (`8px` right margin, `6px` gap):**
+     - Live **Importance** badge preview (`!`, `!!`, or `!!!` when a standalone `!`/`!!`/`!!!` token is typed in Add mode).
      - Live `@Requester` pill preview: appears automatically as user types `@name` (e.g., `@Maya` in `bg_elevated`, `1px solid border_subtle`, `4px` radius, `11px` `text_secondary`, `2px 6px` padding).
      - Subtle `Enter` keycap hint (`bg_elevated`, `10.5px` `text_muted`) shown only when text is non-empty in Add mode.
    - **Requester Autocompletion Floating Popup:**
@@ -181,7 +182,13 @@ Arranged left-to-right on a single `8px`-spaced horizontal row:
    - `Doing`: `14px` `status_doing` outer ring + solid `6px` inner dot (`status_doing`).
    - `Waiting`: `14px` rounded square/circle in `status_waiting` tint with crisp `||` pause bars (`1.5px` stroke `status_waiting`).
    - `Done`: `14px` filled `status_done` circle with crisp white checkmark (`1.5px` stroke).
-2. **Live / Logged Timer Slot (conditional):**
+2. **Importance Badge (conditional, hidden when `None`):**
+   - Compact flat rounded pill (`18px` height, `9px` radius, `0 6px` padding, `10.5px` `700` `Poppins`) placed directly before the **Task Title**:
+     - `!`: `text_secondary` on `bg_elevated` (`1px solid border_subtle`).
+     - `!!`: `status_waiting` on `tint_waiting` (`1px solid tint_waiting_border`).
+     - `!!!`: `danger` on `tint_danger` (`1px solid danger` subtle tint).
+     - `Done` rows (in search): muted (`text_muted` on `bg_elevated`).
+3. **Live / Logged Timer Slot (conditional):**
    - When `Doing` (timer active): `Cascadia Mono` `12px` `500` in `status_doing` (e.g. `00:14:22`).
    - When paused with logged time `> 0`: `Cascadia Mono` `11.5px` in `text_muted` (e.g. `01:15`).
    - When `00:00` and paused: omitted to keep scanline ultra-clean.
@@ -202,7 +209,7 @@ Arranged left-to-right on a single `8px`-spaced horizontal row:
 - **Container:** `bg_surface`, `8px` radius, `1px solid border_subtle` (or `border_focus` hairline on left), `12px` inner padding, `4px 0 8px 0` outer vertical margin. Internal sections separated by `12px` gaps and subtle `1px solid border_subtle` hairlines.
 - **Section A — Header & Primary Controls (`8px` gap):**
   - Editable **Task** Title (`QLineEdit`, transparent background, `13.5px` `600` `text_primary`, subtle bottom `border_focus` line on focus; `e` shortcut expands and selects text, `Enter` saves and collapses back to **Task List**).
-  - Subtle creation metadata line (`Added Thu, Nov 26 · 18:12`, including year if different from current year) in `10.5px` `text_muted`.
+  - Subtle creation metadata line (`Added Thu, Nov 26 · 18:12`, including year if different from current year) in `10.5px` `text_muted` paired on the right with a compact segmented **Importance** selector (`—` / `!` / `!!` / `!!!`).
   - Second compact control row (`8px` gap):
     - Editable `@Requester` chip (`bg_elevated`, `1px solid border_subtle`, `4px` radius; clicking or `r` shortcut edits inline `@name` or plain text, placeholder `+ @requester`, `selectAll()` on `r`). Typing or editing (with or without a leading `@`, though not immediately on initial `r` focus/selection) opens the same non-focus-stealing top-level **Requester** autocompletion floating popup (`bg_elevated` / `bg_surface`, `1px solid border_subtle`, `6px` radius, up to ~6 rows) anchored directly below the **Requester** chip—compatible with both Compact Spotlight Mode and Full Workspace Mode. `Tab`, row click, or navigated `Enter` accepts a suggestion and keeps focus in the field; unnavigated `Enter` saves (auto-canonicalizing against history excluding the edited **Task** itself) and collapses back to **Task List**; `Esc` closes an open popup first before saving/collapsing on the next `Esc`.
     - **Task Status** selector pill (`Todo` / `Waiting` / `Done` cycle or mini-segmented toggle).
@@ -265,7 +272,7 @@ Displayed when Tab `3 Summary` is active (replaces the **Task List** below the s
    - Each hint pairs an ultra-compact micro-tag (`Segoe UI` `9.5px`, `bg_elevated`, `3px` radius, `0px 4px` padding, `text_secondary`, no heavy border) + `10px` `text_muted` verb:
      - **Compact Spotlight:** `Enter` Add · `/` Search · `↓` Expand · `Esc` Hide
      - **Quick Bar focused:** `Enter` Add · `/` Search · `↓` List · `Esc` Hide
-     - **Task List focused (Active / Waiting):** `↓↑` Move · `t` Timer · `n/s/r/e` Edit · `w` Wait · `d` Done · `Esc` Hide
+     - **Task List focused (Active / Waiting):** `↓↑` Move · `t` Timer · `i` ! · `n/s/r/e` Edit · `w` Wait · `d` Done · `Esc` Hide
      - **Thinking Space editing:** `Esc` Collapse · `Ctrl+Enter` Done
      - **Activity Summary:** `←→` Period · `1–3` Tabs · `Esc` Hide
 

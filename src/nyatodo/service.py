@@ -16,6 +16,7 @@ from nyatodo.domain import (
     SummaryPeriodKind,
     Task,
     TaskDateFilter,
+    TaskImportance,
     TaskSortMode,
     TaskStatus,
     TaskSummaryBreakdown,
@@ -39,6 +40,13 @@ class _Unset(Enum):
 
 
 _UNSET = _Unset.TOKEN
+
+_STATUS_SEARCH_ORDER: dict[TaskStatus, int] = {
+    TaskStatus.DOING: 0,
+    TaskStatus.TODO: 1,
+    TaskStatus.WAITING: 2,
+    TaskStatus.DONE: 3,
+}
 
 
 def _default_clock() -> datetime:
@@ -154,12 +162,24 @@ class TodoService:
     @staticmethod
     def _sort_task_group(tasks: list[Task], sort_mode: TaskSortMode) -> list[Task]:
         if sort_mode == TaskSortMode.MANUAL:
-            return sorted(tasks, key=lambda task: (task.sort_order, task.created_at, task.id))
+            return sorted(
+                tasks,
+                key=lambda task: (
+                    -int(task.importance),
+                    task.sort_order,
+                    task.created_at,
+                    task.id,
+                ),
+            )
         if sort_mode == TaskSortMode.NEWEST:
             ordered = sorted(tasks, key=lambda task: task.id)
             ordered.sort(key=lambda task: task.created_at, reverse=True)
+            ordered.sort(key=lambda task: int(task.importance), reverse=True)
             return ordered
-        return sorted(tasks, key=lambda task: (task.created_at, task.id))
+        return sorted(
+            tasks,
+            key=lambda task: (-int(task.importance), task.created_at, task.id),
+        )
 
     def _filter_tasks_by_date(
         self,
@@ -189,6 +209,7 @@ class TodoService:
             id=str(uuid.uuid4()),
             title=parsed.title,
             status=TaskStatus.TODO,
+            importance=parsed.importance,
             requester=canonical_requester,
             notes="",
             sort_order=next_sort_order,
@@ -225,7 +246,7 @@ class TodoService:
         return self._sort_task_group(waiting, sort_mode)
 
     def search_tasks(self, raw_query: str, *, include_done: bool = True) -> list[Task]:
-        """Filter Tasks case-insensitively by title and/or @requester (supports leading '/')."""
+        """Filter Tasks by title, @requester, and/or !..!!! Importance."""
         clean = (
             extract_search_query(raw_query)
             if is_search_input(raw_query)
@@ -234,31 +255,55 @@ class TodoService:
         tasks = self._repo.list_tasks()
         if not include_done:
             tasks = [task for task in tasks if task.status != TaskStatus.DONE]
-        if not clean:
-            return tasks
 
         if clean == "@":
-            return [task for task in tasks if task.requester is not None]
-
-        parsed = parse_quick_input(clean)
-        title_needle = parsed.title.lower()
-        requester_needle = parsed.requester.lower() if parsed.requester is not None else None
-
-        if requester_needle is not None:
-            return [
+            matched = [task for task in tasks if task.requester is not None]
+        elif not clean:
+            matched = tasks
+        else:
+            parsed = parse_quick_input(clean)
+            title_needle = parsed.title.lower()
+            requester_needle = parsed.requester.lower() if parsed.requester is not None else None
+            importance_filter = (
+                parsed.importance if parsed.importance != TaskImportance.NONE else None
+            )
+            matched = [
                 task
                 for task in tasks
-                if (not title_needle or title_needle in task.title.lower())
-                and task.requester is not None
-                and requester_needle in task.requester.lower()
+                if self._matches_search(task, title_needle, requester_needle, importance_filter)
             ]
 
-        return [
-            task
-            for task in tasks
-            if title_needle in task.title.lower()
-            or (task.requester is not None and title_needle in task.requester.lower())
-        ]
+        return sorted(
+            matched,
+            key=lambda task: (
+                _STATUS_SEARCH_ORDER[task.status],
+                -int(task.importance),
+                task.sort_order,
+                task.created_at,
+                task.id,
+            ),
+        )
+
+    @staticmethod
+    def _matches_search(
+        task: Task,
+        title_needle: str,
+        requester_needle: str | None,
+        importance_filter: TaskImportance | None,
+    ) -> bool:
+        if importance_filter is not None and task.importance != importance_filter:
+            return False
+        if requester_needle is not None:
+            return (
+                (not title_needle or title_needle in task.title.lower())
+                and task.requester is not None
+                and requester_needle in task.requester.lower()
+            )
+        if not title_needle:
+            return True
+        return title_needle in task.title.lower() or (
+            task.requester is not None and title_needle in task.requester.lower()
+        )
 
     def suggest_requesters(
         self,
@@ -299,8 +344,9 @@ class TodoService:
         *,
         title: str | _Unset = _UNSET,
         requester: str | _Unset | None = _UNSET,
+        importance: TaskImportance | _Unset = _UNSET,
     ) -> Task:
-        """Update a Task's title and/or requester."""
+        """Update a Task's title, requester, and/or Importance."""
         task = self._require_task(task_id)
         new_title = task.title if isinstance(title, _Unset) else " ".join(title.split())
         if not new_title:
@@ -314,13 +360,30 @@ class TodoService:
             cleaned_req = requester.strip().lstrip("@") or None
             new_requester = self._canonicalize_requester(cleaned_req, exclude_task_id=task_id)
 
+        new_importance = task.importance if isinstance(importance, _Unset) else importance
+
         updated = replace(
             task,
             title=new_title,
             requester=new_requester,
+            importance=new_importance,
             updated_at=self._clock(),
         )
         return self._repo.save_task(updated)
+
+    def set_importance(self, task_id: str, importance: TaskImportance) -> Task:
+        """Set a Task's Importance level."""
+        task = self._require_task(task_id)
+        if task.importance == importance:
+            return task
+        updated = replace(task, importance=importance, updated_at=self._clock())
+        return self._repo.save_task(updated)
+
+    def cycle_importance(self, task_id: str, *, reverse: bool = False) -> Task:
+        """Cycle a Task's Importance forward (None->!->!!->!!!->None) or backward."""
+        task = self._require_task(task_id)
+        target = task.importance.prev_level() if reverse else task.importance.next_level()
+        return self.set_importance(task_id, target)
 
     def _canonicalize_requester(
         self,
@@ -395,22 +458,29 @@ class TodoService:
         return self.set_status(task_id, target)
 
     def reorder_task(self, task_id: str, direction: int) -> list[Task]:
-        """Move a Task up (direction < 0) or down (direction > 0) within its status group."""
+        """Move a Task up or down strictly within its (status, importance) tier."""
         task = self._require_task(task_id)
+        ordered_group = self._sort_task_group(
+            self._repo.list_tasks(task.status), TaskSortMode.MANUAL
+        )
         if direction == 0:
-            return self._repo.list_tasks(task.status)
+            return ordered_group
 
-        group = self._repo.list_tasks(task.status)
-        ids = [item.id for item in group]
-        index = ids.index(task_id)
+        tier = [item for item in ordered_group if item.importance == task.importance]
+        tier_ids = [item.id for item in tier]
+        tier_index = tier_ids.index(task_id)
         step = -1 if direction < 0 else 1
-        target_index = index + step
-        if not (0 <= target_index < len(ids)):
-            return group
+        target_tier_index = tier_index + step
+        if not (0 <= target_tier_index < len(tier)):
+            return ordered_group
 
-        ids[index], ids[target_index] = ids[target_index], ids[index]
+        swap_id = tier_ids[target_tier_index]
+        ids = [item.id for item in ordered_group]
+        idx_a = ids.index(task_id)
+        idx_b = ids.index(swap_id)
+        ids[idx_a], ids[idx_b] = ids[idx_b], ids[idx_a]
         self._repo.update_task_sort_orders(ids)
-        return self._repo.list_tasks(task.status)
+        return self._sort_task_group(self._repo.list_tasks(task.status), TaskSortMode.MANUAL)
 
     def add_sub_step(self, task_id: str, title: str) -> SubStep:
         """Append a new Sub-step to a Task's Thinking Space."""

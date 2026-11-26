@@ -14,7 +14,7 @@ from nyatodo.parser import (
     parse_quick_input,
 )
 from nyatodo.ui.icons import create_plus_pixmap, create_search_pixmap
-from nyatodo.ui.qt_helpers import set_qss_property
+from nyatodo.ui.qt_helpers import set_qss_property, sync_importance_pill
 from nyatodo.ui.requester_autocomplete_popup import RequesterAutocompletePopup
 from nyatodo.ui.theme import DARK_TOKENS, ColorTokens, make_ui_font
 
@@ -142,6 +142,14 @@ class QuickBar(QFrame):
         self.input_edit.set_autocomplete_popup(self.requester_popup)
         layout.addWidget(self.input_edit, 1)
 
+        self.importance_pill = QLabel(self)
+        self.importance_pill.setObjectName("ImportancePill")
+        self.importance_pill.setFont(make_ui_font(10, QFont.Weight.Bold))
+        self.importance_pill.setFixedHeight(20)
+        self.importance_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.importance_pill.setVisible(False)
+        layout.addWidget(self.importance_pill)
+
         self.requester_pill = QLabel(self)
         self.requester_pill.setObjectName("RequesterPill")
         self.requester_pill.setFont(make_ui_font(11, QFont.Weight.Medium))
@@ -245,10 +253,12 @@ class QuickBar(QFrame):
             self._refresh_mode_icon()
 
         if search_mode:
+            self.importance_pill.setVisible(False)
             self.requester_pill.setVisible(False)
             self.enter_hint.setVisible(False)
         else:
             parsed = parse_quick_input(raw)
+            sync_importance_pill(self.importance_pill, parsed.importance)
             if parsed.requester:
                 self.requester_pill.setText(f"@{parsed.requester}")
                 self.requester_pill.setVisible(True)
@@ -328,9 +338,15 @@ class QuickBar(QFrame):
         if raw.strip():
             self.task_submitted.emit(raw)
 
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.DevicePixelRatioChange:
+            self._refresh_mode_icon()
+
     def _refresh_mode_icon(self) -> None:
+        dpr = self.devicePixelRatioF()
         if self._is_search_mode:
-            pixmap = create_search_pixmap(QColor(self._tokens.accent_primary), 16)
+            pixmap = create_search_pixmap(QColor(self._tokens.accent_primary), 16, dpr=dpr)
         else:
-            pixmap = create_plus_pixmap(QColor(self._tokens.text_muted), 16)
+            pixmap = create_plus_pixmap(QColor(self._tokens.text_muted), 16, dpr=dpr)
         self.mode_icon_label.setPixmap(pixmap)

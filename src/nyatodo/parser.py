@@ -3,6 +3,7 @@
 import datetime as dt
 import re
 from dataclasses import dataclass
+from enum import IntEnum
 
 _REQUESTER_PATTERN = re.compile(
     r"(?:^|(?<=\s))@([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)[,;:.!?]?(?=$|\s)"
@@ -14,6 +15,39 @@ _DURATION_PART_RE = re.compile(
     r"^\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?\s*$",
     re.I,
 )
+_IMPORTANCE_TOKENS: dict[str, int] = {"!": 1, "!!": 2, "!!!": 3}
+
+
+class TaskImportance(IntEnum):
+    """Relative Importance of a Task: None (0), ! (1), !! (2), or !!! (3)."""
+
+    NONE = 0
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+
+    @property
+    def marks(self) -> str:
+        """Return exclamation mark glyphs ('', '!', '!!', or '!!!')."""
+        return "!" * int(self.value)
+
+    @property
+    def label(self) -> str:
+        """Return compact UI label ('—' for None, otherwise exclamation marks)."""
+        return "—" if self == TaskImportance.NONE else self.marks
+
+    def next_level(self) -> "TaskImportance":
+        """Cycle forward: None -> ! -> !! -> !!! -> None."""
+        return TaskImportance((int(self.value) + 1) % 4)
+
+    def prev_level(self) -> "TaskImportance":
+        """Cycle backward: None -> !!! -> !! -> ! -> None."""
+        return TaskImportance((int(self.value) - 1) % 4)
+
+    @classmethod
+    def from_int(cls, value: int) -> "TaskImportance":
+        """Resolve a persisted integer importance level (0..3)."""
+        return cls(value)
 
 
 @dataclass(frozen=True)
@@ -22,6 +56,7 @@ class ParsedQuickInput:
 
     title: str
     requester: str | None = None
+    importance: TaskImportance = TaskImportance.NONE
 
 
 @dataclass(frozen=True)
@@ -47,16 +82,31 @@ class QuickBarParser:
 
     @staticmethod
     def parse_quick_input(raw: str) -> ParsedQuickInput:
-        """Extract clean task title and optional @requester from raw input."""
+        """Extract clean task title, optional @requester, and standalone !..!!! Importance."""
         match = _REQUESTER_PATTERN.search(raw)
         if match is None:
-            title = " ".join(raw.split())
-            return ParsedQuickInput(title=title, requester=None)
+            requester: str | None = None
+            without_token = raw
+        else:
+            requester = match.group(1)
+            without_token = raw[: match.start()] + raw[match.end() :]
 
-        requester = match.group(1)
-        without_token = raw[: match.start()] + raw[match.end() :]
-        title = " ".join(without_token.split())
-        return ParsedQuickInput(title=title, requester=requester)
+        title_tokens: list[str] = []
+        max_importance = 0
+        for token in without_token.split():
+            level = _IMPORTANCE_TOKENS.get(token)
+            if level is not None:
+                if level > max_importance:
+                    max_importance = level
+                continue
+            title_tokens.append(token)
+
+        title = " ".join(title_tokens)
+        return ParsedQuickInput(
+            title=title,
+            requester=requester,
+            importance=TaskImportance.from_int(max_importance),
+        )
 
     @staticmethod
     def is_search_input(raw: str) -> bool:

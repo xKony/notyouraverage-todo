@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
@@ -68,7 +68,18 @@ class IdleBanner(QFrame):
     def apply_theme(self, tokens: ColorTokens) -> None:
         """Refresh icon tint for current theme."""
         self._tokens = tokens
-        self.icon_label.setPixmap(create_clock_pixmap(QColor(tokens.status_waiting), 14))
+        self.icon_label.setPixmap(
+            create_clock_pixmap(QColor(tokens.status_waiting), 14, dpr=self.devicePixelRatioF())
+        )
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.DevicePixelRatioChange:
+            self.icon_label.setPixmap(
+                create_clock_pixmap(
+                    QColor(self._tokens.status_waiting), 14, dpr=self.devicePixelRatioF()
+                )
+            )
 
     def show_idle_gap(self, gap: IdleGap, task_titles: list[str]) -> None:
         """Populate and reveal the Idle Check banner without stealing keyboard focus."""

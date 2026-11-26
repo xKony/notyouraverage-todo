@@ -20,6 +20,10 @@ _Avoid_: Assignee, reporter, attribution, link
 The state of a **Task**: `Todo` (ready to work on), `Doing` (actively in progress), `Waiting` (paused on someone else before proceeding), or `Done` (completed).
 _Avoid_: Stage, column, priority
 
+**Importance**:
+The relative significance of a **Task**, expressed as `None` (default) or one of three escalating levels (`!`, `!!`, `!!!`).
+_Avoid_: Priority, urgency, severity
+
 **Thinking Space**:
 An expandable area inside a **Task** holding freeform notes and **Sub-steps** for structuring thoughts and preserving context.
 _Avoid_: Description, wiki, sub-page

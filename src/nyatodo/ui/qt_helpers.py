@@ -1,6 +1,8 @@
 """Shared Qt layout and QSS property helpers for nyatodo UI widgets."""
 
-from PySide6.QtWidgets import QLayout, QWidget
+from PySide6.QtWidgets import QLabel, QLayout, QWidget
+
+from nyatodo.domain import TaskImportance
 
 
 def clear_layout(layout: QLayout) -> None:
@@ -27,3 +29,21 @@ def set_qss_property(widget: QWidget, name: str, value: object) -> None:
     style = widget.style()
     style.unpolish(widget)
     style.polish(widget)
+
+
+def sync_importance_pill(
+    pill: QLabel,
+    importance: TaskImportance,
+    *,
+    is_done: bool = False,
+) -> None:
+    """Sync Importance pill text, QSS level/done properties, tooltip, and visibility."""
+    if importance == TaskImportance.NONE:
+        pill.setVisible(False)
+        return
+    marks = importance.marks
+    pill.setText(marks)
+    set_qss_property(pill, "level", str(int(importance)))
+    set_qss_property(pill, "done", is_done)
+    pill.setToolTip(f"Importance: {marks}")
+    pill.setVisible(True)
