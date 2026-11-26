@@ -52,21 +52,21 @@
 
 ---
 
-## 3. Typography (Bundled `Inter`, `Segoe UI` Fallback)
+## 3. Typography (Bundled `Poppins`, `Segoe UI` Fallback)
 
-Every widget and QSS rule uses bundled **`Inter`** (`src/nyatodo/assets/fonts/Inter-*.ttf`, SIL OFL 1.1) with **`Segoe UI`** fallback—one clean, cohesive font family with zero `Consolas` / monospace font mixing.
+Every widget and QSS rule uses bundled **`Poppins`** (`src/nyatodo/assets/fonts/Poppins-*.ttf`, SIL OFL 1.1) with **`Segoe UI`** fallback—one clean, cohesive font family with zero `Consolas` / monospace font mixing.
 
 | Role | Font Family | Size | Weight | Line Height | Notes |
 |---|---|---|---|---|---|
-| **Brand Wordmark** | `Inter` | `13px` | `600` | `18px` | Crisp brand anchor |
-| **Section / Day Title** | `Inter` | `13px` | `600` | `18px` | Clean hierarchy |
-| **Hero Metric Value** | `Inter` | `22px` | `600` | `28px` | Summary totals (`04:42:10`) |
-| **Task Title** | `Inter` | `13px` | `500` (collapsed) / `600` (expanded) | `18px` | `Qt.ElideRight` when collapsed |
-| **Body / Notes / Inputs** | `Inter` | `13px` | `400` | `19px` | Readable `Notes` measure |
-| **Sub-step Label** | `Inter` | `12px` | `400` | `17px` | Crisp alignment with `14px` check |
-| **Live Timer / Duration** | `Inter` | `12px` | `600` | `16px` | Active timer & summary durations |
-| **Metadata / Pills / Tabs** | `Inter` | `11px` | `500` | `15px` | Tab labels, `@Requester`, captions |
-| **Keycaps & Hints** | `Inter` | `9.5px–10px` | `500–600` | `14px` | Compact `20px` footer hints |
+| **Brand Wordmark** | `Poppins` | `12px` | `300` | `18px` | Crisp brand anchor |
+| **Section / Day Title** | `Poppins` | `13px` | `600` | `18px` | Clean hierarchy |
+| **Hero Metric Value** | `Poppins` | `22px` | `600` | `28px` | Summary totals (`04:42:10`) |
+| **Task Title** | `Poppins` | `13px` | `400` / `600` (`Doing`) | `18px` | `Qt.ElideRight` when collapsed |
+| **Body / Notes / Inputs** | `Poppins` | `13px` | `400` | `19px` | Readable `Notes` measure |
+| **Sub-step Label** | `Poppins` | `12px` | `400` | `17px` | Crisp alignment with `14px` check |
+| **Live Timer / Duration** | `Poppins` | `11px` | `700` | `16px` | Active timer & summary durations |
+| **Metadata / Pills / Tabs** | `Poppins` | `11px` | `500` | `15px` | Tab labels, `@Requester`, captions |
+| **Keycaps & Hints** | `Poppins` | `10px` | `500–600` | `14px` | Compact `20px` footer hints |
 
 ---
 
@@ -114,10 +114,10 @@ All foreground tokens are verified to achieve `>= 4.5:1` WCAG AA contrast agains
 
 ```
 ┌──────────────────────────────────────────────────────────┐ 12px radius
-│ [cat-mark] nyatodo          [● 00:14:22]  [gear]         │ Surface 1: Header (44px)
-│ [ +  Add task... (@who)                   @Maya  Enter ] │ Surface 1: Quick Bar (38px)
+│ [cat-mark] nyatodo          [● 00:14:22]  [gear]         │ Surface 1: Header (32px)
+│ [ +  What's next?                         @Maya  Enter ] │ Surface 1: Quick Bar (42px)
 │ (Optional: Idle Check Banner when idle gap detected)     │ Surface 5: Banner (non-modal)
-│ [ 1 Active 6 | 2 Waiting 2 | 3 Summary ]                 │ Surface 2: Segmented Tabs (32px)
+│ [ All | Doing | Waiting | @Req... | Filter | Summary ]   │ Surface 2: Segmented Tabs (30px)
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │  ● 00:14:22  API rate limit fix          @Maya    2/4    │ Surface 3: Task Row (Doing)
@@ -141,20 +141,20 @@ All foreground tokens are verified to achieve `>= 4.5:1` WCAG AA contrast agains
 
 ### Surface 1: Header + Quick Bar
 
-1. **Header (`44px` height, `16px` horizontal padding):**
+1. **Header (`32px` height, `16px` horizontal padding):**
    - **Left cluster (`8px` gap):**
      - `18 × 18` custom SVG / `QPainter` geometric monogram: minimalist pointed cat-ear silhouette + two clean horizontal whisker ticks on each side (`1.5px` stroke in `text_primary`, rounded linecaps).
-     - `"nyatodo"` wordmark (`13px` `600`, `text_primary`).
+     - `"nyatodo"` wordmark (`12px` `300`, `text_primary`, hidden when compact).
    - **Right cluster (`8px` gap):**
      - **Running Task Timer Pill** (hidden when `0` timers are running; visible when `>= 1` timer runs):
        - Height `24px`, radius `999px`, padding `0 10px`, `tint_accent` background, `1px solid tint_accent_border`.
-       - Inside (`6px` gap): `6px` solid `status_doing` circle + `Cascadia Mono` `11.5px` readout (`00:14:22` if 1 timer, `2 · 00:14:22` if multiple timers running). Clicking jumps to / focuses the active **Task**.
-     - **Settings Button:** `28 × 28`, `6px` radius, subtle `16 × 16` outline gear icon (`1.5px` stroke `text_secondary`, `bg_hover` + `text_primary` on hover).
-2. **Quick Bar (`38px` height, `8px` bottom margin, `8px` radius):**
+       - Inside (`6px` gap): `6px` solid `status_doing` circle + `11px` readout (`00:14:22` if 1 timer, `2 · 00:14:22` if multiple timers running). Clicking jumps to / focuses the active **Task**.
+     - **Settings Button:** `26 × 26`, `6px` radius, subtle `14 × 14` outline gear icon (`1.5px` stroke `text_secondary`, `bg_hover` + `text_primary` on hover).
+2. **Quick Bar (`42px` height, `8px` bottom margin, `8px` radius):**
    - Background `bg_surface`, border `1px solid border_subtle` (transitions to `1.5px solid border_focus` when focused).
    - **Left mode glyph (`16 × 16`, `12px` left margin):** `+` icon in `text_muted` (`Add` mode), switches cleanly to magnifying glass icon in `accent_primary` when input starts with `/`.
-   - **Single-line `QLineEdit` (`13px`, `text_primary`):**
-     - Placeholder (`text_muted`): `"Add task... (@who)  or  / to search"`
+   - **Single-line `QLineEdit` (`15px` placeholder / `14px` text, `text_primary`):**
+     - Placeholder (`text_muted`): `"What's next?"`
    - **Right inline indicators (`8px` right margin, `6px` gap):**
      - Live `@Requester` pill preview: appears automatically as user types `@name` (e.g., `@Maya` in `bg_elevated`, `1px solid border_subtle`, `4px` radius, `11px` `text_secondary`, `2px 6px` padding).
      - Subtle `Enter` keycap hint (`bg_elevated`, `10.5px` `text_muted`) shown only when text is non-empty in Add mode.
