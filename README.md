@@ -21,10 +21,10 @@ uv run python -m nyatodo
 ## Development Checks
 
 ```powershell
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
+uv run ruff check src tests
+uv run ruff format --check src tests
 uv run mypy src tests
+uv run pytest
 ```
 
 ## Documentation

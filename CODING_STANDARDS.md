@@ -7,12 +7,12 @@ All code in `nyatodo` follows these standards to keep the codebase predictable, 
 ## 1. Python & Static Analysis
 
 - **Python Version**: Python `3.13+`. Use modern standard library features (`datetime.UTC`, `pathlib.Path`, `collections.abc`, `X | Y` union syntax, `StrEnum`).
-- **Type Annotations**: Full type annotations across all modules and tests. Code must pass `uv run mypy --strict` with zero errors.
-  - Avoid `Any` unless interfacing directly with untyped external boundaries (such as `ctypes` or Qt event overrides), and document why when used.
+- **Type Annotations**: Full type annotations across all modules and tests. Code must pass `uv run mypy src tests` (`strict = true` in `pyproject.toml`) with zero errors.
+  - Avoid `Any` unless interfacing directly with untyped external boundaries (such as `ctypes` or Qt event overrides), enforced mechanically via Ruff `ANN401`.
   - Prefer `Protocol` and `dataclass(frozen=True)` for clean interfaces and value objects.
-- **Formatting & Linting**: Code must pass `uv run ruff check .` and `uv run ruff format --check .`.
+- **Formatting & Linting**: Code must pass `uv run ruff check src tests` and `uv run ruff format --check src tests`.
   - Line length: `100` characters.
-  - Enabled lint rule families: `E`, `F`, `I`, `UP`, `B`, `SIM`, `RUF`.
+  - Enabled lint rules: `E`, `F`, `I`, `UP`, `B`, `SIM`, `RUF`, `BLE001`, `S110`, `ANN401`.
 
 ---
 
